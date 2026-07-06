@@ -84,6 +84,13 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                 return await self.async_step_init()
 
         current = self._options
+        cycle_start_default = current.get(CONF_BILLING_CYCLE_START)
+        cycle_start_key = (
+            vol.Optional(CONF_BILLING_CYCLE_START, default=cycle_start_default)
+            if cycle_start_default is not None
+            else vol.Optional(CONF_BILLING_CYCLE_START)
+        )
+
         schema = vol.Schema(
             {
                 vol.Required(
@@ -106,10 +113,7 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=1, max=365, step=1, mode="box")
                 ),
-                vol.Optional(
-                    CONF_BILLING_CYCLE_START,
-                    default=current.get(CONF_BILLING_CYCLE_START),
-                ): selector.DateSelector(),
+                cycle_start_key: selector.DateSelector(),
             }
         )
         return self.async_show_form(
@@ -212,6 +216,18 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                 self._options[CONF_PERIODS] = self._periods
                 return await self.async_step_periods_menu()
 
+        # Optional numeric selectors choke if given an explicit `default=None`
+        # (HA tries to coerce it to a float) - only attach a default when a
+        # real value exists, so a genuinely blank field stays blank/absent.
+        tier1_limit_default = (
+            existing_tiers[0].get(CONF_TIER_LIMIT_KWH) if existing_tiers else None
+        )
+        tier1_limit_key = (
+            vol.Optional("tier1_limit_kwh", default=tier1_limit_default)
+            if tier1_limit_default is not None
+            else vol.Optional("tier1_limit_kwh")
+        )
+
         schema = vol.Schema(
             {
                 vol.Required(
@@ -232,10 +248,7 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                         translation_key="period_days",
                     )
                 ),
-                vol.Optional(
-                    "tier1_limit_kwh",
-                    default=(existing_tiers[0].get(CONF_TIER_LIMIT_KWH) if existing_tiers else None),
-                ): selector.NumberSelector(
+                tier1_limit_key: selector.NumberSelector(
                     selector.NumberSelectorConfig(min=0, step=0.01, mode="box")
                 ),
                 vol.Required(
