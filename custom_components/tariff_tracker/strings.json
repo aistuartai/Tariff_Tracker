@@ -1,0 +1,82 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a tariff plan",
+        "description": "Set up cost tracking for one electricity plan. Billing cycle and time-of-use periods are configured next, in the plan's options.",
+        "data": {
+          "plan_name": "Plan name",
+          "import_energy_sensor": "Grid import energy sensor (kWh, total increasing)",
+          "import_power_sensor": "Grid import power sensor (W, optional - live bonus feedback)",
+          "daily_charge": "Daily supply charge"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "menu_options": {
+          "billing_cycle": "Billing cycle",
+          "periods_menu": "Time-of-use periods",
+          "finish": "Save and close"
+        }
+      },
+      "billing_cycle": {
+        "title": "Billing cycle",
+        "data": {
+          "billing_cycle_type": "Cycle type",
+          "billing_cycle_days": "Cycle length (days, if not calendar month)",
+          "billing_cycle_start": "Cycle anchor start date (if not calendar month)"
+        }
+      },
+      "periods_menu": {
+        "title": "Time-of-use periods ({count} configured: {names})",
+        "data": {
+          "action": "Choose an action"
+        }
+      },
+      "period_form": {
+        "title": "Period details",
+        "data": {
+          "name": "Period name",
+          "start_time": "Start time",
+          "end_time": "End time",
+          "days": "Applies on",
+          "tier1_limit_kwh": "First-tier limit (kWh/day, blank = flat rate for whole period)",
+          "tier1_rate": "First-tier rate",
+          "tier2_rate": "Rate after first-tier limit is used",
+          "bonus_enabled": "Enable no-usage bonus for this period",
+          "bonus_amount": "Bonus amount",
+          "bonus_threshold_w": "Average import must stay below (W)",
+          "bonus_calc_mode": "Bonus calculation method"
+        }
+      }
+    },
+    "error": {
+      "start_date_required": "A start date is required for a custom-length billing cycle",
+      "start_end_equal": "Start and end time cannot be the same"
+    }
+  },
+  "selector": {
+    "billing_cycle_type": {
+      "options": {
+        "calendar_month": "Calendar month",
+        "every_n_days": "Fixed N-day cycle from a start date"
+      }
+    },
+    "period_days": {
+      "options": {
+        "all": "Every day",
+        "weekdays": "Weekdays only",
+        "weekends": "Weekends only"
+      }
+    },
+    "bonus_calc_mode": {
+      "options": {
+        "energy_delta": "From energy usage during window (no extra sensor needed)",
+        "live_power_sensor": "From live power sensor readings during window"
+      }
+    }
+  }
+}
