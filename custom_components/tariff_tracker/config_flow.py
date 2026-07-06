@@ -30,7 +30,7 @@ STEP_USER_SCHEMA = vol.Schema(
         vol.Required(
             CONF_DAILY_CHARGE, default=DEFAULT_DAILY_CHARGE
         ): selector.NumberSelector(
-            selector.NumberSelectorConfig(min=0, step=0.0001, mode="box", unit_of_measurement="$/day")
+            selector.NumberSelectorConfig(min=0, step=0.001, mode="box", unit_of_measurement="$/day")
         ),
     }
 )

@@ -242,13 +242,13 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                     "tier1_rate",
                     default=(existing_tiers[0].get(CONF_TIER_RATE) if existing_tiers else 0.0),
                 ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=0, step=0.0001, mode="box")
+                    selector.NumberSelectorConfig(min=0, step=0.001, mode="box")
                 ),
                 vol.Optional(
                     "tier2_rate",
                     default=(existing_tiers[1].get(CONF_TIER_RATE) if len(existing_tiers) > 1 else 0.0),
                 ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=0, step=0.0001, mode="box")
+                    selector.NumberSelectorConfig(min=0, step=0.001, mode="box")
                 ),
                 vol.Required(
                     "bonus_enabled", default=bool(existing_bonus)
