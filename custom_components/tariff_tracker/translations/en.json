@@ -8,6 +8,7 @@
           "plan_name": "Plan name",
           "import_energy_sensor": "Grid import energy sensor (kWh, total increasing)",
           "import_power_sensor": "Grid import power sensor (W, optional - live bonus feedback)",
+          "export_energy_sensor": "Grid export energy sensor (kWh, total increasing, optional - solar feed-in)",
           "daily_charge": "Daily supply charge"
         }
       }
@@ -18,7 +19,8 @@
       "init": {
         "menu_options": {
           "billing_cycle": "Billing cycle",
-          "periods_menu": "Time-of-use periods",
+          "periods_menu": "Import (time-of-use) periods",
+          "export_periods_menu": "Export (feed-in) periods",
           "finish": "Save and close"
         }
       },
@@ -31,13 +33,19 @@
         }
       },
       "periods_menu": {
-        "title": "Time-of-use periods ({count} configured: {names})",
+        "title": "Import periods ({count} configured: {names})",
+        "data": {
+          "action": "Choose an action"
+        }
+      },
+      "export_periods_menu": {
+        "title": "Export periods ({count} configured: {names})",
         "data": {
           "action": "Choose an action"
         }
       },
       "period_form": {
-        "title": "Period details",
+        "title": "{kind} period details",
         "data": {
           "name": "Period name",
           "start_time": "Start time",

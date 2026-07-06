@@ -5,6 +5,7 @@ DOMAIN = "tariff_tracker"
 CONF_PLAN_NAME = "plan_name"
 CONF_IMPORT_ENERGY_SENSOR = "import_energy_sensor"
 CONF_IMPORT_POWER_SENSOR = "import_power_sensor"
+CONF_EXPORT_ENERGY_SENSOR = "export_energy_sensor"
 CONF_DAILY_CHARGE = "daily_charge"
 
 CONF_BILLING_CYCLE_TYPE = "billing_cycle_type"
@@ -15,8 +16,9 @@ BILLING_CYCLE_CALENDAR_MONTH = "calendar_month"
 BILLING_CYCLE_EVERY_N_DAYS = "every_n_days"
 
 CONF_PERIODS = "periods"
+CONF_EXPORT_PERIODS = "export_periods"
 
-# Per-period keys (stored as list of dicts in CONF_PERIODS)
+# Per-period keys (stored as list of dicts in CONF_PERIODS / CONF_EXPORT_PERIODS)
 CONF_PERIOD_NAME = "name"
 CONF_PERIOD_START_TIME = "start_time"
 CONF_PERIOD_END_TIME = "end_time"

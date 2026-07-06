@@ -8,7 +8,12 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_IMPORT_POWER_SENSOR, CONF_PERIOD_NAME, DOMAIN
+from .const import (
+    CONF_EXPORT_ENERGY_SENSOR,
+    CONF_IMPORT_POWER_SENSOR,
+    CONF_PERIOD_NAME,
+    DOMAIN,
+)
 from .runtime import PlanRuntime
 
 
@@ -29,6 +34,17 @@ async def async_setup_entry(
     ]
     if runtime.options.get(CONF_IMPORT_POWER_SENSOR):
         entities.append(CurrentWindowAvgWattsSensor(runtime, entry))
+
+    if runtime.options.get(CONF_EXPORT_ENERGY_SENSOR):
+        entities.extend(
+            [
+                CurrentExportPeriodSensor(runtime, entry),
+                CurrentExportRateSensor(runtime, entry),
+                ExportCreditTodaySensor(runtime, entry),
+                ExportCreditMonthSensor(runtime, entry),
+                ExportCreditBillingPeriodSensor(runtime, entry),
+            ]
+        )
 
     async_add_entities(entities)
 
@@ -172,3 +188,58 @@ class CurrentWindowAvgWattsSensor(_BaseTariffSensor):
         if sample is None:
             return None
         return round(sample.average(), 1)
+
+
+class CurrentExportPeriodSensor(_BaseTariffSensor):
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry) -> None:
+        super().__init__(runtime, entry, "current_export_period", "Current export period")
+
+    @property
+    def native_value(self) -> str | None:
+        period = self._runtime.current_export_period()
+        return period[CONF_PERIOD_NAME] if period else None
+
+
+class CurrentExportRateSensor(_BaseTariffSensor):
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_suggested_display_precision = 4
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry) -> None:
+        super().__init__(runtime, entry, "current_export_rate", "Current export rate")
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        return f"{self._runtime.hass.config.currency}/kWh"
+
+    @property
+    def native_value(self) -> float | None:
+        return self._runtime.current_export_rate()
+
+
+class ExportCreditTodaySensor(_CostSensor):
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry) -> None:
+        super().__init__(runtime, entry, "export_credit_today", "Export credit today")
+
+    @property
+    def native_value(self) -> float:
+        return round(self._runtime.export_credit_today, 4)
+
+
+class ExportCreditMonthSensor(_CostSensor):
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry) -> None:
+        super().__init__(runtime, entry, "export_credit_month", "Export credit this month")
+
+    @property
+    def native_value(self) -> float:
+        return round(self._runtime.export_credit_month, 4)
+
+
+class ExportCreditBillingPeriodSensor(_CostSensor):
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry) -> None:
+        super().__init__(
+            runtime, entry, "export_credit_billing_period", "Export credit this billing period"
+        )
+
+    @property
+    def native_value(self) -> float:
+        return round(self._runtime.export_credit_billing_period, 4)

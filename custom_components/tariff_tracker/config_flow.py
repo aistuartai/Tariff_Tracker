@@ -11,6 +11,7 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_DAILY_CHARGE,
+    CONF_EXPORT_ENERGY_SENSOR,
     CONF_IMPORT_ENERGY_SENSOR,
     CONF_IMPORT_POWER_SENSOR,
     CONF_PLAN_NAME,
@@ -26,6 +27,9 @@ STEP_USER_SCHEMA = vol.Schema(
         ),
         vol.Optional(CONF_IMPORT_POWER_SENSOR): selector.EntitySelector(
             selector.EntitySelectorConfig(domain="sensor", device_class="power")
+        ),
+        vol.Optional(CONF_EXPORT_ENERGY_SENSOR): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="sensor", device_class="energy")
         ),
         vol.Required(
             CONF_DAILY_CHARGE, default=DEFAULT_DAILY_CHARGE

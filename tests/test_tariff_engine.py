@@ -82,3 +82,32 @@ def test_avg_watts_from_energy():
     assert round(engine.avg_watts_from_energy(0.18, 3), 1) == 60.0
     assert engine.avg_watts_from_energy(0, 3) == 0.0
     assert engine.avg_watts_from_energy(1, 0) == 0.0
+
+
+# Export/feed-in periods use the exact same period/tier machinery as import
+# periods - the direction (charge vs credit) is applied by the caller
+# (runtime.py subtracts instead of adds), not by tariff_engine itself.
+SOLAR_FEED_IN = {
+    "name": "Feed-in",
+    "start_time": "00:00",
+    "end_time": "23:59:59",
+    "days": "all",
+    "tiers": [
+        {"limit_kwh": 5, "rate": 0.10},
+        {"limit_kwh": None, "rate": 0.05},
+    ],
+}
+
+
+def test_export_tier_rate_drops_after_first_tier():
+    tiers = SOLAR_FEED_IN["tiers"]
+    assert engine.tier_rate_for_usage(tiers, 0) == 0.10
+    assert engine.tier_rate_for_usage(tiers, 4.99) == 0.10
+    assert engine.tier_rate_for_usage(tiers, 5) == 0.05
+
+
+def test_export_cost_of_delta_splits_across_tier_boundary():
+    # 3 kWh already exported today; export 4 more, so 2 kWh finish the
+    # premium first tier and 2 kWh land in the lower balance tier.
+    credit = engine.cost_of_delta(SOLAR_FEED_IN, kwh_already_used_in_period_today=3, delta_kwh=4)
+    assert round(credit, 4) == round(2 * 0.10 + 2 * 0.05, 4)

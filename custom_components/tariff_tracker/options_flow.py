@@ -1,4 +1,4 @@
-"""Options flow for Tariff Tracker: billing cycle + period management."""
+"""Options flow for Tariff Tracker: billing cycle + import/export periods."""
 from __future__ import annotations
 
 from typing import Any
@@ -19,6 +19,7 @@ from .const import (
     CONF_BONUS_AMOUNT,
     CONF_BONUS_CALC_MODE,
     CONF_BONUS_THRESHOLD_W,
+    CONF_EXPORT_PERIODS,
     CONF_PERIOD_BONUS,
     CONF_PERIOD_DAYS,
     CONF_PERIOD_END_TIME,
@@ -31,31 +32,43 @@ from .const import (
     DAYS_ALL,
     DAYS_WEEKDAYS,
     DAYS_WEEKENDS,
-    DOMAIN,
 )
 
 ACTION_ADD = "__add_new__"
 ACTION_FINISH = "__finish__"
 
+# kind -> (options key, whether this period type supports a no-usage bonus)
+_KIND_CONFIG = {
+    "import": (CONF_PERIODS, True),
+    "export": (CONF_EXPORT_PERIODS, False),
+}
+
 
 class TariffTrackerOptionsFlow(OptionsFlow):
-    """Handle options: billing cycle and periods, editable any time."""
+    """Handle options: billing cycle and import/export periods, editable any time."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._entry = config_entry
         # Work on a mutable copy of current options until saved.
         self._options: dict[str, Any] = dict(config_entry.options)
-        self._periods: list[dict[str, Any]] = list(
-            self._options.get(CONF_PERIODS, [])
-        )
+        self._period_lists: dict[str, list[dict[str, Any]]] = {
+            kind: list(self._options.get(key, []))
+            for kind, (key, _) in _KIND_CONFIG.items()
+        }
         self._editing_index: int | None = None
+        self._editing_kind: str = "import"
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> Any:
         return self.async_show_menu(
             step_id="init",
-            menu_options=["billing_cycle", "periods_menu", "finish"],
+            menu_options=[
+                "billing_cycle",
+                "periods_menu",
+                "export_periods_menu",
+                "finish",
+            ],
         )
 
     # ---- Billing cycle -------------------------------------------------
@@ -120,28 +133,41 @@ class TariffTrackerOptionsFlow(OptionsFlow):
             step_id="billing_cycle", data_schema=schema, errors=errors
         )
 
-    # ---- Periods list menu ----------------------------------------------
+    # ---- Periods list menu (shared by import + export) -------------------
 
     async def async_step_periods_menu(
         self, user_input: dict[str, Any] | None = None
     ) -> Any:
+        return await self._async_periods_menu(user_input, kind="import")
+
+    async def async_step_export_periods_menu(
+        self, user_input: dict[str, Any] | None = None
+    ) -> Any:
+        return await self._async_periods_menu(user_input, kind="export")
+
+    async def _async_periods_menu(
+        self, user_input: dict[str, Any] | None, kind: str
+    ) -> Any:
+        periods = self._period_lists[kind]
+
         if user_input is not None:
             choice = user_input["action"]
             if choice == ACTION_FINISH:
                 return await self.async_step_init()
+            self._editing_kind = kind
             if choice == ACTION_ADD:
                 self._editing_index = None
-                return await self.async_step_period_form()
-            # choice is the index (as string) of an existing period to edit
-            self._editing_index = int(choice)
+            else:
+                # choice is the index (as string) of an existing period to edit
+                self._editing_index = int(choice)
             return await self.async_step_period_form()
 
         options = [
             selector.SelectOptionDict(value=str(i), label=f"Edit: {p[CONF_PERIOD_NAME]}")
-            for i, p in enumerate(self._periods)
+            for i, p in enumerate(periods)
         ]
         options.append(selector.SelectOptionDict(value=ACTION_ADD, label="Add new period"))
-        options.append(selector.SelectOptionDict(value=ACTION_FINISH, label="Done with periods"))
+        options.append(selector.SelectOptionDict(value=ACTION_FINISH, label="Done"))
 
         schema = vol.Schema(
             {
@@ -150,26 +176,27 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                 )
             }
         )
+        step_id = "periods_menu" if kind == "import" else "export_periods_menu"
         return self.async_show_form(
-            step_id="periods_menu",
+            step_id=step_id,
             data_schema=schema,
             description_placeholders={
-                "count": str(len(self._periods)),
-                "names": ", ".join(p[CONF_PERIOD_NAME] for p in self._periods) or "none yet",
+                "count": str(len(periods)),
+                "names": ", ".join(p[CONF_PERIOD_NAME] for p in periods) or "none yet",
             },
         )
 
-    # ---- Add/edit a single period ---------------------------------------
+    # ---- Add/edit a single period (shared by import + export) -----------
 
     async def async_step_period_form(
         self, user_input: dict[str, Any] | None = None
     ) -> Any:
+        kind = self._editing_kind
+        _, supports_bonus = _KIND_CONFIG[kind]
+        periods = self._period_lists[kind]
+
         errors: dict[str, str] = {}
-        existing = (
-            self._periods[self._editing_index]
-            if self._editing_index is not None
-            else {}
-        )
+        existing = periods[self._editing_index] if self._editing_index is not None else {}
         existing_tiers = existing.get(CONF_PERIOD_TIERS, [])
         existing_bonus = existing.get(CONF_PERIOD_BONUS) or {}
 
@@ -192,7 +219,7 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                     )
 
                 bonus = None
-                if user_input.get("bonus_enabled"):
+                if supports_bonus and user_input.get("bonus_enabled"):
                     bonus = {
                         CONF_BONUS_AMOUNT: user_input["bonus_amount"],
                         CONF_BONUS_THRESHOLD_W: user_input["bonus_threshold_w"],
@@ -209,12 +236,13 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                 }
 
                 if self._editing_index is not None:
-                    self._periods[self._editing_index] = period
+                    periods[self._editing_index] = period
                 else:
-                    self._periods.append(period)
+                    periods.append(period)
 
-                self._options[CONF_PERIODS] = self._periods
-                return await self.async_step_periods_menu()
+                options_key, _ = _KIND_CONFIG[kind]
+                self._options[options_key] = periods
+                return await self._async_periods_menu(None, kind=kind)
 
         # Optional numeric selectors choke if given an explicit `default=None`
         # (HA tries to coerce it to a float) - only attach a default when a
@@ -228,70 +256,84 @@ class TariffTrackerOptionsFlow(OptionsFlow):
             else vol.Optional("tier1_limit_kwh")
         )
 
-        schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_PERIOD_NAME, default=existing.get(CONF_PERIOD_NAME, "")
-                ): str,
-                vol.Required(
-                    CONF_PERIOD_START_TIME,
-                    default=existing.get(CONF_PERIOD_START_TIME),
-                ): selector.TimeSelector(),
-                vol.Required(
-                    CONF_PERIOD_END_TIME, default=existing.get(CONF_PERIOD_END_TIME)
-                ): selector.TimeSelector(),
-                vol.Required(
-                    CONF_PERIOD_DAYS, default=existing.get(CONF_PERIOD_DAYS, DAYS_ALL)
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[DAYS_ALL, DAYS_WEEKDAYS, DAYS_WEEKENDS],
-                        translation_key="period_days",
-                    )
-                ),
-                tier1_limit_key: selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=0, step=0.01, mode="box")
-                ),
-                vol.Required(
-                    "tier1_rate",
-                    default=(existing_tiers[0].get(CONF_TIER_RATE) if existing_tiers else 0.0),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=0, step=0.001, mode="box")
-                ),
-                vol.Optional(
-                    "tier2_rate",
-                    default=(existing_tiers[1].get(CONF_TIER_RATE) if len(existing_tiers) > 1 else 0.0),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=0, step=0.001, mode="box")
-                ),
-                vol.Required(
-                    "bonus_enabled", default=bool(existing_bonus)
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    "bonus_amount", default=existing_bonus.get(CONF_BONUS_AMOUNT, 1.0)
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=0, step=0.01, mode="box")
-                ),
-                vol.Optional(
-                    "bonus_threshold_w",
-                    default=existing_bonus.get(CONF_BONUS_THRESHOLD_W, 60),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=0, step=1, mode="box")
-                ),
-                vol.Optional(
-                    "bonus_calc_mode",
-                    default=existing_bonus.get(
-                        CONF_BONUS_CALC_MODE, BONUS_CALC_ENERGY_DELTA
+        rate_unit = "$/kWh you're charged" if kind == "import" else "$/kWh you're credited"
+
+        schema_dict: dict[Any, Any] = {
+            vol.Required(
+                CONF_PERIOD_NAME, default=existing.get(CONF_PERIOD_NAME, "")
+            ): str,
+            vol.Required(
+                CONF_PERIOD_START_TIME,
+                default=existing.get(CONF_PERIOD_START_TIME),
+            ): selector.TimeSelector(),
+            vol.Required(
+                CONF_PERIOD_END_TIME, default=existing.get(CONF_PERIOD_END_TIME)
+            ): selector.TimeSelector(),
+            vol.Required(
+                CONF_PERIOD_DAYS, default=existing.get(CONF_PERIOD_DAYS, DAYS_ALL)
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[DAYS_ALL, DAYS_WEEKDAYS, DAYS_WEEKENDS],
+                    translation_key="period_days",
+                )
+            ),
+            tier1_limit_key: selector.NumberSelector(
+                selector.NumberSelectorConfig(min=0, step=0.01, mode="box")
+            ),
+            vol.Required(
+                "tier1_rate",
+                default=(existing_tiers[0].get(CONF_TIER_RATE) if existing_tiers else 0.0),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, step=0.001, mode="box", unit_of_measurement=rate_unit
+                )
+            ),
+            vol.Optional(
+                "tier2_rate",
+                default=(existing_tiers[1].get(CONF_TIER_RATE) if len(existing_tiers) > 1 else 0.0),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, step=0.001, mode="box", unit_of_measurement=rate_unit
+                )
+            ),
+        }
+
+        if supports_bonus:
+            schema_dict.update(
+                {
+                    vol.Required(
+                        "bonus_enabled", default=bool(existing_bonus)
+                    ): selector.BooleanSelector(),
+                    vol.Optional(
+                        "bonus_amount", default=existing_bonus.get(CONF_BONUS_AMOUNT, 1.0)
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(min=0, step=0.01, mode="box")
                     ),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[BONUS_CALC_ENERGY_DELTA, BONUS_CALC_LIVE_POWER],
-                        translation_key="bonus_calc_mode",
-                    )
-                ),
-            }
-        )
+                    vol.Optional(
+                        "bonus_threshold_w",
+                        default=existing_bonus.get(CONF_BONUS_THRESHOLD_W, 60),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(min=0, step=1, mode="box")
+                    ),
+                    vol.Optional(
+                        "bonus_calc_mode",
+                        default=existing_bonus.get(
+                            CONF_BONUS_CALC_MODE, BONUS_CALC_ENERGY_DELTA
+                        ),
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[BONUS_CALC_ENERGY_DELTA, BONUS_CALC_LIVE_POWER],
+                            translation_key="bonus_calc_mode",
+                        )
+                    ),
+                }
+            )
+
         return self.async_show_form(
-            step_id="period_form", data_schema=schema, errors=errors
+            step_id="period_form",
+            data_schema=vol.Schema(schema_dict),
+            errors=errors,
+            description_placeholders={"kind": kind.capitalize()},
         )
 
     # ---- Finish -----------------------------------------------------------

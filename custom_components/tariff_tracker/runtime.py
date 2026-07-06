@@ -24,6 +24,8 @@ from .const import (
     CONF_BILLING_CYCLE_TYPE,
     CONF_BONUS_THRESHOLD_W,
     CONF_DAILY_CHARGE,
+    CONF_EXPORT_ENERGY_SENSOR,
+    CONF_EXPORT_PERIODS,
     CONF_IMPORT_ENERGY_SENSOR,
     CONF_IMPORT_POWER_SENSOR,
     CONF_PERIOD_BONUS,
@@ -82,10 +84,17 @@ class PlanRuntime:
     bonus_earned_today: dict[str, bool | None] = field(default_factory=dict)
     bonus_samples: dict[str, BonusWindowSample] = field(default_factory=dict)
 
+    last_export_kwh: float | None = None
+    export_tier_usage_today: dict[str, float] = field(default_factory=dict)
+
     cost_today: float = 0.0
     cost_month: float = 0.0
     cost_billing_period: float = 0.0
     bonus_savings_billing_period: float = 0.0
+
+    export_credit_today: float = 0.0
+    export_credit_month: float = 0.0
+    export_credit_billing_period: float = 0.0
 
     today: date = field(default_factory=lambda: dt_util.now().date())
     billing_period_start: date | None = None
@@ -96,10 +105,15 @@ class PlanRuntime:
     _store: Store | None = field(default=None, repr=False)
     _unsub_source: Callable[[], None] | None = field(default=None, repr=False)
     _unsub_power: Callable[[], None] | None = field(default=None, repr=False)
+    _unsub_export: Callable[[], None] | None = field(default=None, repr=False)
 
     @property
     def periods(self) -> list[dict[str, Any]]:
         return self.options.get(CONF_PERIODS, [])
+
+    @property
+    def export_periods(self) -> list[dict[str, Any]]:
+        return self.options.get(CONF_EXPORT_PERIODS, [])
 
     @property
     def daily_charge(self) -> float:
@@ -113,6 +127,16 @@ class PlanRuntime:
         if period is None:
             return None
         used_today = self.tier_usage_today.get(period[CONF_PERIOD_NAME], 0.0)
+        return engine.tier_rate_for_usage(period[CONF_PERIOD_TIERS], used_today)
+
+    def current_export_period(self) -> dict[str, Any] | None:
+        return engine.find_active_period(self.export_periods, dt_util.now())
+
+    def current_export_rate(self) -> float | None:
+        period = self.current_export_period()
+        if period is None:
+            return None
+        used_today = self.export_tier_usage_today.get(period[CONF_PERIOD_NAME], 0.0)
         return engine.tier_rate_for_usage(period[CONF_PERIOD_TIERS], used_today)
 
     def days_remaining(self) -> int | None:
@@ -153,6 +177,12 @@ class PlanRuntime:
                 self.hass, [power_sensor], self._handle_power_event
             )
 
+        export_sensor = self.options.get(CONF_EXPORT_ENERGY_SENSOR)
+        if export_sensor:
+            self._unsub_export = async_track_state_change_event(
+                self.hass, [export_sensor], self._handle_export_energy_event
+            )
+
         # Midnight rollover: reset daily/period accumulators, apply daily charge.
         self.listeners.append(
             async_track_time_change(
@@ -180,6 +210,8 @@ class PlanRuntime:
             self._unsub_source()
         if self._unsub_power:
             self._unsub_power()
+        if self._unsub_export:
+            self._unsub_export()
         for unsub in self.listeners:
             unsub()
 
@@ -194,6 +226,11 @@ class PlanRuntime:
         self.cost_month = saved.get("cost_month", 0.0)
         self.cost_billing_period = saved.get("cost_billing_period", 0.0)
         self.bonus_savings_billing_period = saved.get("bonus_savings_billing_period", 0.0)
+        self.last_export_kwh = saved.get("last_export_kwh")
+        self.export_tier_usage_today = saved.get("export_tier_usage_today", {})
+        self.export_credit_today = saved.get("export_credit_today", 0.0)
+        self.export_credit_month = saved.get("export_credit_month", 0.0)
+        self.export_credit_billing_period = saved.get("export_credit_billing_period", 0.0)
         if saved.get("today"):
             self.today = date.fromisoformat(saved["today"])
         if saved.get("billing_period_start"):
@@ -214,6 +251,11 @@ class PlanRuntime:
                 "cost_month": self.cost_month,
                 "cost_billing_period": self.cost_billing_period,
                 "bonus_savings_billing_period": self.bonus_savings_billing_period,
+                "last_export_kwh": self.last_export_kwh,
+                "export_tier_usage_today": self.export_tier_usage_today,
+                "export_credit_today": self.export_credit_today,
+                "export_credit_month": self.export_credit_month,
+                "export_credit_billing_period": self.export_credit_billing_period,
                 "today": self.today.isoformat(),
                 "billing_period_start": (
                     self.billing_period_start.isoformat()
@@ -247,6 +289,7 @@ class PlanRuntime:
             self.billing_period_end = end
             self.cost_billing_period = 0.0
             self.bonus_savings_billing_period = 0.0
+            self.export_credit_billing_period = 0.0
 
     # ---- energy sensor handling -------------------------------------------
 
@@ -293,6 +336,54 @@ class PlanRuntime:
         self.cost_today += cost
         self.cost_month += cost
         self.cost_billing_period += cost
+
+    # ---- export sensor handling --------------------------------------
+
+    @callback
+    def _handle_export_energy_event(self, event: Event) -> None:
+        new_state: State | None = event.data.get("new_state")
+        if new_state is None or new_state.state in ("unknown", "unavailable"):
+            return
+        try:
+            new_kwh = float(new_state.state)
+        except ValueError:
+            return
+
+        now = dt_util.now()
+        if self.last_export_kwh is None:
+            self.last_export_kwh = new_kwh
+            self._notify()
+            return
+
+        delta = new_kwh - self.last_export_kwh
+        if delta < 0:
+            # Meter reset (e.g. firmware restart) rather than real usage.
+            delta = new_kwh
+        self.last_export_kwh = new_kwh
+
+        if delta > 0:
+            self._apply_export_delta(now, delta)
+
+        self.hass.async_create_task(self._async_save())
+        self._notify()
+
+    def _apply_export_delta(self, now: datetime, delta_kwh: float) -> None:
+        period = engine.find_active_period(self.export_periods, now)
+        if period is None:
+            return  # no export period configured for this moment
+        name = period[CONF_PERIOD_NAME]
+        used_today = self.export_tier_usage_today.get(name, 0.0)
+        credit = engine.cost_of_delta(period, used_today, delta_kwh)
+
+        self.export_tier_usage_today[name] = used_today + delta_kwh
+
+        # Credit nets straight out of the running cost totals.
+        self.cost_today -= credit
+        self.cost_month -= credit
+        self.cost_billing_period -= credit
+        self.export_credit_today += credit
+        self.export_credit_month += credit
+        self.export_credit_billing_period += credit
 
     # ---- live power sensor handling (bonus calc_mode=live_power_sensor) --
 
@@ -379,11 +470,14 @@ class PlanRuntime:
             )
         }
         self.bonus_earned_today = {}
+        self.export_tier_usage_today = {}
+        self.export_credit_today = 0.0
         self.cost_today = self.daily_charge
         self.cost_billing_period += self.daily_charge
 
         if today.month != self.today.month:
             self.cost_month = 0.0
+            self.export_credit_month = 0.0
         self.cost_month += self.daily_charge
 
         self._recompute_billing_bounds(today)

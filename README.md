@@ -24,6 +24,10 @@ import energy sensor and define your plan's rates and time windows.
 - A `binary_sensor` per bonus-enabled period that flips daily, so you get a
   free calendar-style history of bonus days via Home Assistant's built-in
   history/logbook — no extra dashboard needed
+- Optional export/feed-in tracking: define export periods the same way as
+  import periods (day filter, tiered rates), and the credit is netted
+  straight out of `cost_today` / `cost_this_month` / `cost_this_billing_period`
+  automatically — no separate bill math needed
 
 ## Requirements
 
@@ -32,6 +36,8 @@ import energy sensor and define your plan's rates and time windows.
   integrations already expose one.
 - Optionally, a grid import **power** (W) sensor if you want live bonus
   window feedback instead of the after-the-fact energy-based calculation.
+- Optionally, a grid export **energy** (kWh, `total_increasing`) sensor if
+  you have solar and want feed-in credit tracked and netted against cost.
 
 ## Installation
 
@@ -53,7 +59,8 @@ directory and restart Home Assistant.
 2. Give the plan a name, pick your grid import energy sensor (and power
    sensor, if using), and set your daily supply charge.
 3. Open the new entry's **Configure** to set the billing cycle and add your
-   time-of-use periods (rates, times, tiers, and bonus rules).
+   import periods (rates, times, tiers, and bonus rules) and, if you have
+   solar, your export/feed-in periods.
 4. Rates change every year or two — come back to **Configure** to edit them,
    no need to remove and re-add the integration.
 
@@ -61,16 +68,26 @@ directory and restart Home Assistant.
 
 | Entity | Description |
 |---|---|
-| `sensor.<plan>_current_period` | Name of the active period right now |
-| `sensor.<plan>_current_rate` | $/kWh that applies right now |
-| `sensor.<plan>_cost_today` | Running cost for today |
-| `sensor.<plan>_cost_this_month` | Running cost for the calendar month |
-| `sensor.<plan>_cost_this_billing_period` | Running cost for the current billing cycle |
+| `sensor.<plan>_current_period` | Name of the active import period right now |
+| `sensor.<plan>_current_rate` | $/kWh charged right now |
+| `sensor.<plan>_cost_today` | Running net cost for today (import cost + daily charge − export credit) |
+| `sensor.<plan>_cost_this_month` | Running net cost for the calendar month |
+| `sensor.<plan>_cost_this_billing_period` | Running net cost for the current billing cycle |
 | `sensor.<plan>_bonus_savings_this_billing_period` | Total bonus $ earned so far this cycle |
 | `sensor.<plan>_billing_period_start` | Start date of the current billing cycle |
 | `sensor.<plan>_billing_period_days_remaining` | Days left in the current cycle |
 | `binary_sensor.<period>_bonus_active_window` | On while that period's bonus window is active |
 | `binary_sensor.<period>_bonus_earned_today` | Result once the window closes for the day |
+
+Only present if an export energy sensor is configured:
+
+| Entity | Description |
+|---|---|
+| `sensor.<plan>_current_export_period` | Name of the active export period right now |
+| `sensor.<plan>_current_export_rate` | $/kWh credited right now |
+| `sensor.<plan>_export_credit_today` | Feed-in credit earned today (already netted into `cost_today`) |
+| `sensor.<plan>_export_credit_this_month` | Feed-in credit earned this month |
+| `sensor.<plan>_export_credit_this_billing_period` | Feed-in credit earned this billing cycle |
 
 ## Contributing
 
