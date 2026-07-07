@@ -1,0 +1,27 @@
+reset_costs:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: tariff_tracker
+    reset_today:
+      default: true
+      selector:
+        boolean:
+    reset_month:
+      default: true
+      selector:
+        boolean:
+    reset_billing_period:
+      default: true
+      selector:
+        boolean:
+    reset_power_tracking:
+      default: true
+      selector:
+        boolean:
+    reset_tier_usage:
+      default: false
+      selector:
+        boolean:
