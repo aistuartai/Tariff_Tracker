@@ -316,6 +316,42 @@ class PlanRuntime:
             }
         )
 
+    # ---- manual reset ------------------------------------------------
+
+    async def async_reset_costs(
+        self,
+        *,
+        reset_today: bool = True,
+        reset_month: bool = True,
+        reset_billing_period: bool = True,
+        reset_power_tracking: bool = True,
+        reset_tier_usage: bool = False,
+    ) -> None:
+        """Zero accumulated cost/credit/power counters. Never touches the
+        configured billing period dates or time-of-use period definitions.
+        """
+        if reset_today:
+            self.cost_today = 0.0
+            self.export_credit_today = 0.0
+        if reset_month:
+            self.cost_month = 0.0
+            self.export_credit_month = 0.0
+        if reset_billing_period:
+            self.cost_billing_period = 0.0
+            self.bonus_savings_billing_period = 0.0
+            self.export_credit_billing_period = 0.0
+        if reset_power_tracking:
+            self.energy_by_period_today = {}
+            self.period_avg_watts_today = {}
+            for sample in self.bonus_samples.values():
+                sample.reset()
+        if reset_tier_usage:
+            self.tier_usage_today = {}
+            self.export_tier_usage_today = {}
+
+        await self._async_save()
+        self._notify()
+
     # ---- billing period bookkeeping --------------------------------------
 
     def _recompute_billing_bounds(self, today: date) -> None:
