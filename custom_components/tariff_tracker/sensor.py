@@ -35,6 +35,9 @@ async def async_setup_entry(
     if runtime.options.get(CONF_IMPORT_POWER_SENSOR):
         entities.append(CurrentWindowAvgWattsSensor(runtime, entry))
 
+    for period in runtime.periods:
+        entities.append(PeriodAvgWattsSensor(runtime, entry, period))
+
     if runtime.options.get(CONF_EXPORT_ENERGY_SENSOR):
         entities.extend(
             [
@@ -188,6 +191,25 @@ class CurrentWindowAvgWattsSensor(_BaseTariffSensor):
         if sample is None:
             return None
         return round(sample.average(), 1)
+
+
+class PeriodAvgWattsSensor(_BaseTariffSensor):
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = "W"
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry, period: dict) -> None:
+        self._period_name = period[CONF_PERIOD_NAME]
+        super().__init__(
+            runtime,
+            entry,
+            f"{self._period_name}_avg_watts_today",
+            f"{self._period_name} avg power today",
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        value = self._runtime.current_period_avg_watts(self._period_name)
+        return round(value, 1) if value is not None else None
 
 
 class CurrentExportPeriodSensor(_BaseTariffSensor):
