@@ -87,6 +87,9 @@ class PlanRuntime:
     last_export_kwh: float | None = None
     export_tier_usage_today: dict[str, float] = field(default_factory=dict)
 
+    period_started_at: dict[str, datetime] = field(default_factory=dict)
+    period_avg_watts_today: dict[str, float] = field(default_factory=dict)
+
     cost_today: float = 0.0
     cost_month: float = 0.0
     cost_billing_period: float = 0.0
@@ -128,6 +131,22 @@ class PlanRuntime:
             return None
         used_today = self.tier_usage_today.get(period[CONF_PERIOD_NAME], 0.0)
         return engine.tier_rate_for_usage(period[CONF_PERIOD_TIERS], used_today)
+
+    def current_period_avg_watts(self, period_name: str) -> float | None:
+        period = next(
+            (p for p in self.periods if p[CONF_PERIOD_NAME] == period_name), None
+        )
+        if period is None:
+            return None
+        now = dt_util.now()
+        if engine.period_contains_time(period, now):
+            started = self.period_started_at.get(period_name)
+            if started is None:
+                return None
+            elapsed_hours = (now - started).total_seconds() / 3600
+            energy = self.energy_by_period_today.get(period_name, 0.0)
+            return engine.avg_watts_from_energy(energy, elapsed_hours)
+        return self.period_avg_watts_today.get(period_name)
 
     def current_export_period(self) -> dict[str, Any] | None:
         return engine.find_active_period(self.export_periods, dt_util.now())
@@ -205,6 +224,30 @@ class PlanRuntime:
                 )
             )
 
+        # Mark window-open time and finalize avg import power for every period.
+        for period in self.periods:
+            name = period[CONF_PERIOD_NAME]
+            start_time = engine.parse_time(period[CONF_PERIOD_START_TIME])
+            end_time = engine.parse_time(period[CONF_PERIOD_END_TIME])
+            self.listeners.append(
+                async_track_time_change(
+                    self.hass,
+                    self._make_period_start_marker(name),
+                    hour=start_time.hour,
+                    minute=start_time.minute,
+                    second=start_time.second,
+                )
+            )
+            self.listeners.append(
+                async_track_time_change(
+                    self.hass,
+                    self._make_period_avg_finalizer(name),
+                    hour=end_time.hour,
+                    minute=end_time.minute,
+                    second=end_time.second,
+                )
+            )
+
     def async_unload(self) -> None:
         if self._unsub_source:
             self._unsub_source()
@@ -231,6 +274,7 @@ class PlanRuntime:
         self.export_credit_today = saved.get("export_credit_today", 0.0)
         self.export_credit_month = saved.get("export_credit_month", 0.0)
         self.export_credit_billing_period = saved.get("export_credit_billing_period", 0.0)
+        self.period_avg_watts_today = saved.get("period_avg_watts_today", {})
         if saved.get("today"):
             self.today = date.fromisoformat(saved["today"])
         if saved.get("billing_period_start"):
@@ -256,6 +300,7 @@ class PlanRuntime:
                 "export_credit_today": self.export_credit_today,
                 "export_credit_month": self.export_credit_month,
                 "export_credit_billing_period": self.export_credit_billing_period,
+                "period_avg_watts_today": self.period_avg_watts_today,
                 "today": self.today.isoformat(),
                 "billing_period_start": (
                     self.billing_period_start.isoformat()
@@ -451,6 +496,44 @@ class PlanRuntime:
 
         return _finalize
 
+    # ---- per-period average import power -------------------------------
+
+    def _make_period_start_marker(self, period_name: str) -> Callable[[datetime], None]:
+        @callback
+        def _mark(now: datetime) -> None:
+            self.period_started_at[period_name] = now
+
+        return _mark
+
+    def _make_period_avg_finalizer(self, period_name: str) -> Callable[[datetime], None]:
+        @callback
+        def _finalize(now: datetime) -> None:
+            energy = self.energy_by_period_today.get(period_name, 0.0)
+            started = self.period_started_at.get(period_name)
+            if started is not None:
+                elapsed_hours = (now - started).total_seconds() / 3600
+            else:
+                period = next(
+                    (p for p in self.periods if p[CONF_PERIOD_NAME] == period_name),
+                    None,
+                )
+                if period is None:
+                    return
+                start_t = engine.parse_time(period[CONF_PERIOD_START_TIME])
+                end_t = engine.parse_time(period[CONF_PERIOD_END_TIME])
+                elapsed_hours = (
+                    datetime.combine(date.min, end_t)
+                    - datetime.combine(date.min, start_t)
+                ).total_seconds() / 3600
+
+            self.period_avg_watts_today[period_name] = engine.avg_watts_from_energy(
+                energy, elapsed_hours
+            )
+            self.hass.async_create_task(self._async_save())
+            self._notify()
+
+        return _finalize
+
     # ---- daily/monthly/billing-period rollover -----------------------
 
     @callback
@@ -470,6 +553,14 @@ class PlanRuntime:
             )
         }
         self.bonus_earned_today = {}
+        self.period_avg_watts_today = {
+            name: val
+            for name, val in self.period_avg_watts_today.items()
+            if any(
+                p[CONF_PERIOD_NAME] == name and engine.period_contains_time(p, now)
+                for p in self.periods
+            )
+        }
         self.export_tier_usage_today = {}
         self.export_credit_today = 0.0
         self.cost_today = self.daily_charge
