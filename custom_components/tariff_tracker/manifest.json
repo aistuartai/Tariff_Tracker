@@ -4,9 +4,9 @@
   "codeowners": ["@aistuartai"],
   "config_flow": true,
   "documentation": "https://github.com/aistuartai/Tariff_Tracker",
-  "issue_tracker": "https://github.com/aistuartai/Tariff_Tracker/issues",
   "integration_type": "service",
   "iot_class": "calculated",
+  "issue_tracker": "https://github.com/aistuartai/Tariff_Tracker/issues",
   "requirements": [],
   "version": "0.3.0"
 }
