@@ -31,6 +31,7 @@ async def async_setup_entry(
         BillingPeriodStartSensor(runtime, entry),
         DaysRemainingSensor(runtime, entry),
         BonusSavingsSensor(runtime, entry),
+        DailyChargeSensor(runtime, entry),
     ]
     if runtime.options.get(CONF_IMPORT_POWER_SENSOR):
         entities.append(CurrentWindowAvgWattsSensor(runtime, entry))
@@ -160,6 +161,23 @@ class BillingPeriodStartSensor(_BaseTariffSensor):
     @property
     def native_value(self):
         return self._runtime.billing_period_start
+
+
+class DailyChargeSensor(_BaseTariffSensor):
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_suggested_display_precision = 4
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry) -> None:
+        super().__init__(runtime, entry, "daily_charge", "Daily supply charge")
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        return self._runtime.hass.config.currency
+
+    @property
+    def native_value(self) -> float:
+        return self._runtime.daily_charge
 
 
 class DaysRemainingSensor(_BaseTariffSensor):
