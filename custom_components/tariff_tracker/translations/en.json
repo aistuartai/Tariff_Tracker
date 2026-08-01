@@ -18,10 +18,17 @@
     "step": {
       "init": {
         "menu_options": {
+          "plan_settings": "Plan settings (daily charge)",
           "billing_cycle": "Billing cycle",
           "periods_menu": "Import (time-of-use) periods",
           "export_periods_menu": "Export (feed-in) periods",
           "finish": "Save and close"
+        }
+      },
+      "plan_settings": {
+        "title": "Plan settings",
+        "data": {
+          "daily_charge": "Daily supply charge"
         }
       },
       "billing_cycle": {

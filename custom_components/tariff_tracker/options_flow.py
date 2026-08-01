@@ -19,6 +19,7 @@ from .const import (
     CONF_BONUS_AMOUNT,
     CONF_BONUS_CALC_MODE,
     CONF_BONUS_THRESHOLD_W,
+    CONF_DAILY_CHARGE,
     CONF_EXPORT_PERIODS,
     CONF_PERIOD_BONUS,
     CONF_PERIOD_DAYS,
@@ -64,12 +65,38 @@ class TariffTrackerOptionsFlow(OptionsFlow):
         return self.async_show_menu(
             step_id="init",
             menu_options=[
+                "plan_settings",
                 "billing_cycle",
                 "periods_menu",
                 "export_periods_menu",
                 "finish",
             ],
         )
+
+    # ---- Plan settings (daily charge) -----------------------------------
+
+    async def async_step_plan_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> Any:
+        if user_input is not None:
+            self._options[CONF_DAILY_CHARGE] = user_input[CONF_DAILY_CHARGE]
+            return await self.async_step_init()
+
+        current_daily_charge = self._options.get(
+            CONF_DAILY_CHARGE, self._entry.data.get(CONF_DAILY_CHARGE, 0.0)
+        )
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_DAILY_CHARGE, default=current_daily_charge
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0, step=0.001, mode="box", unit_of_measurement="$/day"
+                    )
+                ),
+            }
+        )
+        return self.async_show_form(step_id="plan_settings", data_schema=schema)
 
     # ---- Billing cycle -------------------------------------------------
 
