@@ -22,6 +22,8 @@ from .const import (
     CONF_BILLING_CYCLE_DAYS,
     CONF_BILLING_CYCLE_START,
     CONF_BILLING_CYCLE_TYPE,
+    CONF_BONUS_END_TIME,
+    CONF_BONUS_START_TIME,
     CONF_BONUS_THRESHOLD_W,
     CONF_DAILY_CHARGE,
     CONF_EXPORT_ENERGY_SENSOR,
@@ -29,12 +31,14 @@ from .const import (
     CONF_IMPORT_ENERGY_SENSOR,
     CONF_IMPORT_POWER_SENSOR,
     CONF_PERIOD_BONUS,
+    CONF_PERIOD_DAYS,
     CONF_PERIOD_END_TIME,
     CONF_PERIOD_NAME,
     CONF_PERIOD_START_TIME,
     CONF_PERIOD_TIERS,
     CONF_PERIODS,
     BILLING_CYCLE_CALENDAR_MONTH,
+    DAYS_ALL,
     DOMAIN,
 )
 
@@ -90,6 +94,10 @@ class PlanRuntime:
 
     period_started_at: dict[str, datetime] = field(default_factory=dict)
     period_avg_watts_today: dict[str, float] = field(default_factory=dict)
+    # Independent running total of kWh used in each period today. Separate
+    # from energy_by_period_today (which the avg-watts calc owns) so this
+    # can't interfere with that calc; reset once per period's own end time.
+    period_energy_kwh_today: dict[str, float] = field(default_factory=dict)
 
     cost_today: float = 0.0
     cost_month: float = 0.0
@@ -210,11 +218,15 @@ class PlanRuntime:
             )
         )
 
-        # Finalize bonus windows at each period's end time.
+        # Finalize bonus windows at the bonus's own end time if it defines a
+        # sub-window narrower than the enclosing period, else the period's end time.
         for period in self.periods:
-            if not period.get(CONF_PERIOD_BONUS):
+            bonus = period.get(CONF_PERIOD_BONUS)
+            if not bonus:
                 continue
-            end_time = engine.parse_time(period[CONF_PERIOD_END_TIME])
+            end_time = engine.parse_time(
+                bonus.get(CONF_BONUS_END_TIME) or period[CONF_PERIOD_END_TIME]
+            )
             self.listeners.append(
                 async_track_time_change(
                     self.hass,
@@ -276,6 +288,7 @@ class PlanRuntime:
         self.export_credit_month = saved.get("export_credit_month", 0.0)
         self.export_credit_billing_period = saved.get("export_credit_billing_period", 0.0)
         self.period_avg_watts_today = saved.get("period_avg_watts_today", {})
+        self.period_energy_kwh_today = saved.get("period_energy_kwh_today", {})
         if saved.get("today"):
             self.today = date.fromisoformat(saved["today"])
         if saved.get("billing_period_start"):
@@ -302,6 +315,7 @@ class PlanRuntime:
                 "export_credit_month": self.export_credit_month,
                 "export_credit_billing_period": self.export_credit_billing_period,
                 "period_avg_watts_today": self.period_avg_watts_today,
+                "period_energy_kwh_today": self.period_energy_kwh_today,
                 "today": self.today.isoformat(),
                 "billing_period_start": (
                     self.billing_period_start.isoformat()
@@ -343,6 +357,7 @@ class PlanRuntime:
         if reset_power_tracking:
             self.energy_by_period_today = {}
             self.period_avg_watts_today = {}
+            self.period_energy_kwh_today = {}
             for sample in self.bonus_samples.values():
                 sample.reset()
         if reset_tier_usage:
@@ -415,6 +430,9 @@ class PlanRuntime:
         self.energy_by_period_today[name] = (
             self.energy_by_period_today.get(name, 0.0) + delta_kwh
         )
+        self.period_energy_kwh_today[name] = (
+            self.period_energy_kwh_today.get(name, 0.0) + delta_kwh
+        )
         self.cost_today += cost
         self.cost_month += cost
         self.cost_billing_period += cost
@@ -486,6 +504,16 @@ class PlanRuntime:
         bonus = active.get(CONF_PERIOD_BONUS)
         if not bonus or bonus.get("calc_mode") != BONUS_CALC_LIVE_POWER:
             return
+        bonus_start = bonus.get(CONF_BONUS_START_TIME)
+        bonus_end = bonus.get(CONF_BONUS_END_TIME)
+        if bonus_start and bonus_end:
+            window = {
+                CONF_PERIOD_START_TIME: bonus_start,
+                CONF_PERIOD_END_TIME: bonus_end,
+                CONF_PERIOD_DAYS: active.get(CONF_PERIOD_DAYS, DAYS_ALL),
+            }
+            if not engine.period_contains_time(window, now):
+                return
         name = active[CONF_PERIOD_NAME]
         sample = self.bonus_samples.setdefault(name, BonusWindowSample())
         sample.sample(now, watts)
@@ -509,8 +537,12 @@ class PlanRuntime:
             if bonus.get("calc_mode") == BONUS_CALC_LIVE_POWER and period_name in self.bonus_samples:
                 avg_w = self.bonus_samples[period_name].average()
             else:
-                start_t = engine.parse_time(period[CONF_PERIOD_START_TIME])
-                end_t = engine.parse_time(period[CONF_PERIOD_END_TIME])
+                start_t = engine.parse_time(
+                    bonus.get(CONF_BONUS_START_TIME) or period[CONF_PERIOD_START_TIME]
+                )
+                end_t = engine.parse_time(
+                    bonus.get(CONF_BONUS_END_TIME) or period[CONF_PERIOD_END_TIME]
+                )
                 window_hours = (
                     datetime.combine(date.min, end_t)
                     - datetime.combine(date.min, start_t)
@@ -566,6 +598,15 @@ class PlanRuntime:
             self.period_avg_watts_today[period_name] = engine.avg_watts_from_energy(
                 energy, elapsed_hours
             )
+
+            # Independent of the avg-watts calc above: this period's window
+            # has just closed, so its daily energy-used total is complete.
+            # Reset for the next cycle - this is what correctly handles
+            # windows that span midnight (e.g. Controlled Load), since the
+            # reset happens at the period's own end time rather than at
+            # midnight.
+            self.period_energy_kwh_today[period_name] = 0.0
+
             self.hass.async_create_task(self._async_save())
             self._notify()
 

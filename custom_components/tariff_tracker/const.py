@@ -34,6 +34,11 @@ CONF_TIER_RATE = "rate"
 CONF_BONUS_AMOUNT = "amount"
 CONF_BONUS_THRESHOLD_W = "threshold_w"
 CONF_BONUS_CALC_MODE = "calc_mode"
+# Optional sub-window within the enclosing period that the bonus is actually
+# evaluated over (e.g. a 6pm-9pm bonus window inside a 4pm-11pm peak period).
+# Falls back to the enclosing period's own start/end when absent.
+CONF_BONUS_START_TIME = "bonus_start_time"
+CONF_BONUS_END_TIME = "bonus_end_time"
 
 BONUS_CALC_ENERGY_DELTA = "energy_delta"
 BONUS_CALC_LIVE_POWER = "live_power_sensor"

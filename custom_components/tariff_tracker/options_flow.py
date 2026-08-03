@@ -18,6 +18,8 @@ from .const import (
     CONF_BILLING_CYCLE_TYPE,
     CONF_BONUS_AMOUNT,
     CONF_BONUS_CALC_MODE,
+    CONF_BONUS_END_TIME,
+    CONF_BONUS_START_TIME,
     CONF_BONUS_THRESHOLD_W,
     CONF_DAILY_CHARGE,
     CONF_EXPORT_PERIODS,
@@ -251,6 +253,8 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                         CONF_BONUS_AMOUNT: user_input["bonus_amount"],
                         CONF_BONUS_THRESHOLD_W: user_input["bonus_threshold_w"],
                         CONF_BONUS_CALC_MODE: user_input["bonus_calc_mode"],
+                        CONF_BONUS_START_TIME: user_input.get("bonus_start_time"),
+                        CONF_BONUS_END_TIME: user_input.get("bonus_end_time"),
                     }
 
                 period = {
@@ -326,6 +330,18 @@ class TariffTrackerOptionsFlow(OptionsFlow):
         }
 
         if supports_bonus:
+            bonus_start_default = existing_bonus.get(CONF_BONUS_START_TIME)
+            bonus_start_key = (
+                vol.Optional(CONF_BONUS_START_TIME, default=bonus_start_default)
+                if bonus_start_default is not None
+                else vol.Optional(CONF_BONUS_START_TIME)
+            )
+            bonus_end_default = existing_bonus.get(CONF_BONUS_END_TIME)
+            bonus_end_key = (
+                vol.Optional(CONF_BONUS_END_TIME, default=bonus_end_default)
+                if bonus_end_default is not None
+                else vol.Optional(CONF_BONUS_END_TIME)
+            )
             schema_dict.update(
                 {
                     vol.Required(
@@ -353,6 +369,12 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                             translation_key="bonus_calc_mode",
                         )
                     ),
+                    # Optional sub-window the bonus is evaluated over, if
+                    # narrower than the period itself (e.g. a 6-9pm bonus
+                    # window inside a 4-11pm peak period). Leave blank to
+                    # use the period's own start/end time.
+                    bonus_start_key: selector.TimeSelector(),
+                    bonus_end_key: selector.TimeSelector(),
                 }
             )
 
