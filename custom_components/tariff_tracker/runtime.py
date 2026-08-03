@@ -607,6 +607,19 @@ class PlanRuntime:
             # midnight.
             self.period_energy_kwh_today[period_name] = 0.0
 
+            # Also reset the avg-watts numerator itself now that it's been
+            # consumed above. A period that spans midnight (e.g. Controlled
+            # Load) is exempt from the midnight-rollover clear (so its energy
+            # survives being split by the day boundary while its window is
+            # still open) - but with no bonus finalizer either to pop it,
+            # nothing was ever clearing it, so it accumulated night after
+            # night indefinitely and inflated this same average further each
+            # day. Resetting it here, at the point the value has just been
+            # used, closes that gap for every period regardless of whether
+            # it has a bonus. Harmless if a bonus finalizer already cleared
+            # it - both just want it empty by day's end.
+            self.energy_by_period_today.pop(period_name, None)
+
             self.hass.async_create_task(self._async_save())
             self._notify()
 
