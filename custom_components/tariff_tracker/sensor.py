@@ -1,6 +1,8 @@
 """Sensor platform for Tariff Tracker."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -9,9 +11,18 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    CONF_BONUS_AMOUNT,
+    CONF_BONUS_END_TIME,
+    CONF_BONUS_START_TIME,
+    CONF_BONUS_THRESHOLD_W,
     CONF_EXPORT_ENERGY_SENSOR,
     CONF_IMPORT_POWER_SENSOR,
+    CONF_PERIOD_BONUS,
+    CONF_PERIOD_END_TIME,
     CONF_PERIOD_NAME,
+    CONF_PERIOD_START_TIME,
+    CONF_PERIOD_TIERS,
+    CONF_TIER_RATE,
     DOMAIN,
 )
 from .runtime import PlanRuntime
@@ -38,6 +49,11 @@ async def async_setup_entry(
 
     for period in runtime.periods:
         entities.append(PeriodAvgWattsSensor(runtime, entry, period))
+        entities.append(PeriodEnergyTodaySensor(runtime, entry, period))
+        entities.append(PeriodWindowSensor(runtime, entry, period))
+        entities.append(PeriodRateSensor(runtime, entry, period))
+        if period.get(CONF_PERIOD_BONUS):
+            entities.append(PeriodBonusThresholdSensor(runtime, entry, period))
 
     if runtime.options.get(CONF_EXPORT_ENERGY_SENSOR):
         entities.extend(
@@ -228,6 +244,119 @@ class PeriodAvgWattsSensor(_BaseTariffSensor):
     def native_value(self) -> float | None:
         value = self._runtime.current_period_avg_watts(self._period_name)
         return round(value, 1) if value is not None else None
+
+
+class PeriodEnergyTodaySensor(_BaseTariffSensor):
+    """Running total kWh used in this period today, resetting once the
+    period's own window closes (independent of the avg-watts calc)."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = "kWh"
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 3
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry, period: dict) -> None:
+        self._period_name = period[CONF_PERIOD_NAME]
+        super().__init__(
+            runtime,
+            entry,
+            f"{self._period_name}_energy_kwh_today",
+            f"{self._period_name} energy today",
+        )
+
+    @property
+    def native_value(self) -> float:
+        return round(self._runtime.period_energy_kwh_today.get(self._period_name, 0.0), 3)
+
+
+class PeriodWindowSensor(_BaseTariffSensor):
+    """Diagnostic: the configured start/end time of a tariff period."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:clock-time-four-outline"
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry, period: dict) -> None:
+        self._period_name = period[CONF_PERIOD_NAME]
+        self._start_time = period[CONF_PERIOD_START_TIME]
+        self._end_time = period[CONF_PERIOD_END_TIME]
+        super().__init__(
+            runtime,
+            entry,
+            f"{self._period_name}_window",
+            f"{self._period_name} window",
+        )
+
+    @property
+    def native_value(self) -> str:
+        return f"{self._start_time} - {self._end_time}"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str]:
+        return {"start_time": self._start_time, "end_time": self._end_time}
+
+
+class PeriodRateSensor(_BaseTariffSensor):
+    """Diagnostic: the configured $/kWh rate for a tariff period (first
+    tier rate; full tier list, including any usage limit, as an attribute)."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_suggested_display_precision = 4
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry, period: dict) -> None:
+        self._period_name = period[CONF_PERIOD_NAME]
+        self._tiers = period[CONF_PERIOD_TIERS]
+        super().__init__(
+            runtime,
+            entry,
+            f"{self._period_name}_rate",
+            f"{self._period_name} rate",
+        )
+
+    @property
+    def native_unit_of_measurement(self) -> str:
+        return f"{self._runtime.hass.config.currency}/kWh"
+
+    @property
+    def native_value(self) -> float:
+        return self._tiers[0][CONF_TIER_RATE]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, list]:
+        return {"tiers": self._tiers}
+
+
+class PeriodBonusThresholdSensor(_BaseTariffSensor):
+    """Diagnostic: the configured bonus power threshold + window for a
+    period's no-usage bonus."""
+
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = "W"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry, period: dict) -> None:
+        self._period_name = period[CONF_PERIOD_NAME]
+        self._bonus = period[CONF_PERIOD_BONUS]
+        self._window_start = self._bonus.get(CONF_BONUS_START_TIME) or period[CONF_PERIOD_START_TIME]
+        self._window_end = self._bonus.get(CONF_BONUS_END_TIME) or period[CONF_PERIOD_END_TIME]
+        super().__init__(
+            runtime,
+            entry,
+            f"{self._period_name}_bonus_threshold",
+            f"{self._period_name} bonus threshold",
+        )
+
+    @property
+    def native_value(self) -> float:
+        return self._bonus[CONF_BONUS_THRESHOLD_W]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "bonus_window_start": self._window_start,
+            "bonus_window_end": self._window_end,
+            "bonus_amount": self._bonus.get(CONF_BONUS_AMOUNT),
+        }
 
 
 class CurrentExportPeriodSensor(_BaseTariffSensor):
