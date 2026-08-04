@@ -3,6 +3,19 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.9.0] - 2026-08-05
+
+### Added
+- New per-period sensors tracking total kWh across the current billing
+  period (not just today): `sensor.<period>_energy_this_billing_period`
+  for each import period, and `sensor.<period>_export_energy_this_billing_period`
+  for each export period. Reset when the billing period rolls over or on
+  manual billing-period reset, same as the existing cost/credit billing-
+  period totals.
+- New per-period lifetime totals that never reset:
+  `sensor.<period>_energy_total` for each import period and
+  `sensor.<period>_export_energy_total` for each export period.
+
 ## [0.8.1] - 2026-08-04
 
 ### Changed

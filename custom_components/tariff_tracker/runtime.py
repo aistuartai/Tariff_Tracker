@@ -100,6 +100,16 @@ class PlanRuntime:
     # period's own end time, so it holds its value for the rest of the day
     # once the window closes.
     period_energy_kwh_today: dict[str, float] = field(default_factory=dict)
+    # Running total kWh used in each period across the current billing
+    # period. Resets only when the billing period itself rolls over (see
+    # _recompute_billing_bounds), unlike period_energy_kwh_today which
+    # resets nightly.
+    period_energy_kwh_billing_period: dict[str, float] = field(default_factory=dict)
+    export_period_energy_kwh_billing_period: dict[str, float] = field(default_factory=dict)
+    # All-time running total kWh per period. Never reset by any rollover or
+    # manual reset - a lifetime counter.
+    period_energy_kwh_total: dict[str, float] = field(default_factory=dict)
+    export_period_energy_kwh_total: dict[str, float] = field(default_factory=dict)
 
     cost_today: float = 0.0
     cost_month: float = 0.0
@@ -292,6 +302,16 @@ class PlanRuntime:
         self.export_credit_billing_period = saved.get("export_credit_billing_period", 0.0)
         self.period_avg_watts_today = saved.get("period_avg_watts_today", {})
         self.period_energy_kwh_today = saved.get("period_energy_kwh_today", {})
+        self.period_energy_kwh_billing_period = saved.get(
+            "period_energy_kwh_billing_period", {}
+        )
+        self.export_period_energy_kwh_billing_period = saved.get(
+            "export_period_energy_kwh_billing_period", {}
+        )
+        self.period_energy_kwh_total = saved.get("period_energy_kwh_total", {})
+        self.export_period_energy_kwh_total = saved.get(
+            "export_period_energy_kwh_total", {}
+        )
         if saved.get("today"):
             self.today = date.fromisoformat(saved["today"])
         if saved.get("billing_period_start"):
@@ -319,6 +339,10 @@ class PlanRuntime:
                 "export_credit_billing_period": self.export_credit_billing_period,
                 "period_avg_watts_today": self.period_avg_watts_today,
                 "period_energy_kwh_today": self.period_energy_kwh_today,
+                "period_energy_kwh_billing_period": self.period_energy_kwh_billing_period,
+                "export_period_energy_kwh_billing_period": self.export_period_energy_kwh_billing_period,
+                "period_energy_kwh_total": self.period_energy_kwh_total,
+                "export_period_energy_kwh_total": self.export_period_energy_kwh_total,
                 "today": self.today.isoformat(),
                 "billing_period_start": (
                     self.billing_period_start.isoformat()
@@ -357,6 +381,8 @@ class PlanRuntime:
             self.cost_billing_period = 0.0
             self.bonus_savings_billing_period = 0.0
             self.export_credit_billing_period = 0.0
+            self.period_energy_kwh_billing_period = {}
+            self.export_period_energy_kwh_billing_period = {}
         if reset_power_tracking:
             self.energy_by_period_today = {}
             self.period_avg_watts_today = {}
@@ -390,6 +416,8 @@ class PlanRuntime:
             self.cost_billing_period = 0.0
             self.bonus_savings_billing_period = 0.0
             self.export_credit_billing_period = 0.0
+            self.period_energy_kwh_billing_period = {}
+            self.export_period_energy_kwh_billing_period = {}
 
     def _recompute_month_bounds(self, today: date) -> None:
         """Self-correct cost_month/export_credit_month on setup if the last
@@ -453,6 +481,12 @@ class PlanRuntime:
         self.period_energy_kwh_today[name] = (
             self.period_energy_kwh_today.get(name, 0.0) + delta_kwh
         )
+        self.period_energy_kwh_billing_period[name] = (
+            self.period_energy_kwh_billing_period.get(name, 0.0) + delta_kwh
+        )
+        self.period_energy_kwh_total[name] = (
+            self.period_energy_kwh_total.get(name, 0.0) + delta_kwh
+        )
         self.cost_today += cost
         self.cost_month += cost
         self.cost_billing_period += cost
@@ -496,6 +530,12 @@ class PlanRuntime:
         credit = engine.cost_of_delta(period, used_today, delta_kwh)
 
         self.export_tier_usage_today[name] = used_today + delta_kwh
+        self.export_period_energy_kwh_billing_period[name] = (
+            self.export_period_energy_kwh_billing_period.get(name, 0.0) + delta_kwh
+        )
+        self.export_period_energy_kwh_total[name] = (
+            self.export_period_energy_kwh_total.get(name, 0.0) + delta_kwh
+        )
 
         # Credit nets straight out of the running cost totals.
         self.cost_today -= credit

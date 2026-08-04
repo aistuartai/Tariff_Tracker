@@ -50,6 +50,8 @@ async def async_setup_entry(
     for period in runtime.periods:
         entities.append(PeriodAvgWattsSensor(runtime, entry, period))
         entities.append(PeriodEnergyTodaySensor(runtime, entry, period))
+        entities.append(PeriodEnergyBillingPeriodSensor(runtime, entry, period))
+        entities.append(PeriodEnergyTotalSensor(runtime, entry, period))
         entities.append(PeriodWindowSensor(runtime, entry, period))
         entities.append(PeriodRateSensor(runtime, entry, period))
         if period.get(CONF_PERIOD_BONUS):
@@ -65,6 +67,9 @@ async def async_setup_entry(
                 ExportCreditBillingPeriodSensor(runtime, entry),
             ]
         )
+        for period in runtime.export_periods:
+            entities.append(ExportPeriodEnergyBillingPeriodSensor(runtime, entry, period))
+            entities.append(ExportPeriodEnergyTotalSensor(runtime, entry, period))
 
     async_add_entities(entities)
 
@@ -268,6 +273,103 @@ class PeriodEnergyTodaySensor(_BaseTariffSensor):
     @property
     def native_value(self) -> float:
         return round(self._runtime.period_energy_kwh_today.get(self._period_name, 0.0), 3)
+
+
+class PeriodEnergyBillingPeriodSensor(_BaseTariffSensor):
+    """Total kWh consumed under this period across the current billing period."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = "kWh"
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 3
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry, period: dict) -> None:
+        self._period_name = period[CONF_PERIOD_NAME]
+        super().__init__(
+            runtime,
+            entry,
+            f"{self._period_name}_energy_kwh_billing_period",
+            f"{self._period_name} energy this billing period",
+        )
+
+    @property
+    def native_value(self) -> float:
+        return round(
+            self._runtime.period_energy_kwh_billing_period.get(self._period_name, 0.0), 3
+        )
+
+
+class ExportPeriodEnergyBillingPeriodSensor(_BaseTariffSensor):
+    """Total kWh exported under this export period across the current billing period."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = "kWh"
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 3
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry, period: dict) -> None:
+        self._period_name = period[CONF_PERIOD_NAME]
+        super().__init__(
+            runtime,
+            entry,
+            f"export_{self._period_name}_energy_kwh_billing_period",
+            f"{self._period_name} export energy this billing period",
+        )
+
+    @property
+    def native_value(self) -> float:
+        return round(
+            self._runtime.export_period_energy_kwh_billing_period.get(
+                self._period_name, 0.0
+            ),
+            3,
+        )
+
+
+class PeriodEnergyTotalSensor(_BaseTariffSensor):
+    """Lifetime total kWh consumed under this period, never reset."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = "kWh"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 3
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry, period: dict) -> None:
+        self._period_name = period[CONF_PERIOD_NAME]
+        super().__init__(
+            runtime,
+            entry,
+            f"{self._period_name}_energy_kwh_total",
+            f"{self._period_name} energy total",
+        )
+
+    @property
+    def native_value(self) -> float:
+        return round(self._runtime.period_energy_kwh_total.get(self._period_name, 0.0), 3)
+
+
+class ExportPeriodEnergyTotalSensor(_BaseTariffSensor):
+    """Lifetime total kWh exported under this export period, never reset."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = "kWh"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 3
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry, period: dict) -> None:
+        self._period_name = period[CONF_PERIOD_NAME]
+        super().__init__(
+            runtime,
+            entry,
+            f"export_{self._period_name}_energy_kwh_total",
+            f"{self._period_name} export energy total",
+        )
+
+    @property
+    def native_value(self) -> float:
+        return round(
+            self._runtime.export_period_energy_kwh_total.get(self._period_name, 0.0), 3
+        )
 
 
 class PeriodWindowSensor(_BaseTariffSensor):
