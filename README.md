@@ -101,6 +101,13 @@ Only present if an export energy sensor is configured:
 | `sensor.<plan>_export_credit_this_month` | Feed-in credit earned this month |
 | `sensor.<plan>_export_credit_this_billing_period` | Feed-in credit earned this billing cycle |
 
+## Buttons created per plan
+
+| Entity | Description |
+|---|---|
+| `button.<plan>_reset_cost_history` | Zeroes today's, this month's, this billing period's, and power-tracking totals in one go |
+| `button.<plan>_reset_monthly_cost` | Zeroes just this month's running cost/credit, leaving everything else untouched |
+
 ## Contributing
 
 Issues and PRs welcome. Core cost/bonus math lives in

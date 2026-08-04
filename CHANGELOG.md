@@ -3,6 +3,23 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.0] - 2026-08-04
+
+### Fixed
+- `cost_this_month` (and `export_credit_this_month`) had no self-correction
+  on setup, unlike the billing period total: they only reset via a
+  callback scheduled for exactly midnight, so a Home Assistant restart or
+  reload landing right on that boundary silently skipped the reset, and
+  last month's cost stayed baked into this month's total until the
+  following midnight happened to fire cleanly. Now self-corrects on every
+  setup, the same way the billing period total already did.
+
+### Added
+- "Reset monthly cost" button per plan: zeroes just this month's running
+  cost/credit, leaving today's, the billing period's, and tier/power
+  tracking totals untouched (the existing "Reset cost history" button
+  resets all of them at once).
+
 ## [0.7.0] - 2026-08-04
 
 ### Fixed
@@ -114,6 +131,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   rates, configurable billing cycle (calendar month or fixed N-day cycle),
   and a conditional low-usage bonus per period.
 
+[0.8.0]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.8.0
 [0.7.0]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.7.0
 [0.6.1]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.6.1
 [0.6.0]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.6.0

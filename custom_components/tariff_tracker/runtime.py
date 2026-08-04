@@ -193,6 +193,7 @@ class PlanRuntime:
             self._restore(saved)
 
         self._recompute_billing_bounds(dt_util.now().date())
+        self._recompute_month_bounds(dt_util.now().date())
 
         energy_sensor = self.options[CONF_IMPORT_ENERGY_SENSOR]
         self._unsub_source = async_track_state_change_event(
@@ -387,6 +388,23 @@ class PlanRuntime:
             self.cost_billing_period = 0.0
             self.bonus_savings_billing_period = 0.0
             self.export_credit_billing_period = 0.0
+
+    def _recompute_month_bounds(self, today: date) -> None:
+        """Self-correct cost_month/export_credit_month on setup if the last
+        known day is in a different calendar month than now.
+
+        _handle_midnight is the only other place these reset, and it only
+        fires from a callback scheduled for exactly 00:00:00 - if Home
+        Assistant is restarting/reloading right at that moment, that
+        specific tick never runs, and last month's cost would otherwise
+        stay stuck inside this month's total until the following midnight
+        happens to land cleanly. billing_period_start already gets this
+        same self-correction in _recompute_billing_bounds above; this
+        mirrors it for the calendar-month counters.
+        """
+        if (self.today.year, self.today.month) != (today.year, today.month):
+            self.cost_month = 0.0
+            self.export_credit_month = 0.0
 
     # ---- energy sensor handling -------------------------------------------
 
