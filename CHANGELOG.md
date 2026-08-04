@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.8.1] - 2026-08-04
+
+### Changed
+- `sensor.<period>_energy_today` now resets at midnight instead of at the
+  period's own end time. Previously it zeroed the moment a period's window
+  closed (e.g. a period ending at 3pm would show 0 kWh for the rest of the
+  day) - it now holds its full daily total until midnight, matching what
+  the "today" in its name implies. The avg-power sensor's own internal
+  energy tracking (used to compute the live/finalized average) is
+  unaffected and still finalizes at the period's own end time.
+
 ## [0.8.0] - 2026-08-04
 
 ### Fixed
@@ -131,6 +142,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   rates, configurable billing cycle (calendar month or fixed N-day cycle),
   and a conditional low-usage bonus per period.
 
+[0.8.1]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.8.1
 [0.8.0]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.8.0
 [0.7.0]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.7.0
 [0.6.1]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.6.1

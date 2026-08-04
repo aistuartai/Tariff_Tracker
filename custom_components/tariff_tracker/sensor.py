@@ -247,8 +247,9 @@ class PeriodAvgWattsSensor(_BaseTariffSensor):
 
 
 class PeriodEnergyTodaySensor(_BaseTariffSensor):
-    """Running total kWh used in this period today, resetting once the
-    period's own window closes (independent of the avg-watts calc)."""
+    """Running total kWh used in this period today, resetting at midnight
+    (independent of the avg-watts calc, which resets when the period's own
+    window closes)."""
 
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = "kWh"

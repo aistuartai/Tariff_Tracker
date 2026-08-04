@@ -96,7 +96,9 @@ class PlanRuntime:
     period_avg_watts_today: dict[str, float] = field(default_factory=dict)
     # Independent running total of kWh used in each period today. Separate
     # from energy_by_period_today (which the avg-watts calc owns) so this
-    # can't interfere with that calc; reset once per period's own end time.
+    # can't interfere with that calc; resets at midnight, not at the
+    # period's own end time, so it holds its value for the rest of the day
+    # once the window closes.
     period_energy_kwh_today: dict[str, float] = field(default_factory=dict)
 
     cost_today: float = 0.0
@@ -617,15 +619,12 @@ class PlanRuntime:
                 energy, elapsed_hours
             )
 
-            # Independent of the avg-watts calc above: this period's window
-            # has just closed, so its daily energy-used total is complete.
-            # Reset for the next cycle - this is what correctly handles
-            # windows that span midnight (e.g. Controlled Load), since the
-            # reset happens at the period's own end time rather than at
-            # midnight.
-            self.period_energy_kwh_today[period_name] = 0.0
+            # period_energy_kwh_today is NOT touched here - it resets at
+            # midnight (see _handle_midnight), not at the period's own end
+            # time, so it reads as a genuine "used today" total that holds
+            # its value for the rest of the day once the window closes.
 
-            # Also reset the avg-watts numerator itself now that it's been
+            # Reset the avg-watts numerator itself now that it's been
             # consumed above. A period that spans midnight (e.g. Controlled
             # Load) is exempt from the midnight-rollover clear (so its energy
             # survives being split by the day boundary while its window is
@@ -649,6 +648,7 @@ class PlanRuntime:
     def _handle_midnight(self, now: datetime) -> None:
         today = now.date()
         self.tier_usage_today = {}
+        self.period_energy_kwh_today = {}
         # A period whose window is still open right at midnight (e.g. an
         # overnight 22:00-06:00 window) needs its running energy total kept
         # until its own finalizer closes it out later this morning - only
