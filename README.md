@@ -1,5 +1,9 @@
 # Tariff Tracker
 
+[![GitHub release](https://img.shields.io/github/v/release/aistuartai/Tariff_Tracker)](https://github.com/aistuartai/Tariff_Tracker/releases)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Home Assistant custom integration that tracks the real cost of a time-of-use
 electricity plan — daily supply charge, peak/shoulder/off-peak/free periods
 (with per-period tiered rates), and an optional "stay under a threshold and
@@ -7,6 +11,8 @@ get a bonus" reward some retailers offer during a peak window.
 
 Everything is configured in the UI: no YAML. Point it at your existing grid
 import energy sensor and define your plan's rates and time windows.
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Features
 
@@ -61,8 +67,9 @@ directory and restart Home Assistant.
 3. Open the new entry's **Configure** to set the billing cycle and add your
    import periods (rates, times, tiers, and bonus rules) and, if you have
    solar, your export/feed-in periods.
-4. Rates change every year or two — come back to **Configure** to edit them,
-   no need to remove and re-add the integration.
+4. Rates change every year or two — come back to **Configure** to edit,
+   add, or delete periods any time; no need to remove and re-add the
+   integration.
 
 ## Entities created per plan
 
