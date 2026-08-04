@@ -9,7 +9,15 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import tariff_engine as engine
-from .const import CONF_PERIOD_BONUS, CONF_PERIOD_NAME, DOMAIN
+from .const import (
+    CONF_BONUS_END_TIME,
+    CONF_BONUS_START_TIME,
+    CONF_PERIOD_BONUS,
+    CONF_PERIOD_END_TIME,
+    CONF_PERIOD_NAME,
+    CONF_PERIOD_START_TIME,
+    DOMAIN,
+)
 from .runtime import PlanRuntime
 
 
@@ -60,10 +68,21 @@ class BonusActiveWindowSensor(_BaseBonusSensor):
             runtime, entry, period, "bonus_active_window",
             f"{period[CONF_PERIOD_NAME]} bonus window active",
         )
+        bonus = period[CONF_PERIOD_BONUS]
+        # The bonus may define its own narrower window (e.g. 6pm-9pm) than
+        # the enclosing period (e.g. 4pm-11pm peak) - fall back to the
+        # period's own start/end when the bonus doesn't override them.
+        self._bonus_window = {
+            **period,
+            CONF_PERIOD_START_TIME: bonus.get(CONF_BONUS_START_TIME)
+            or period[CONF_PERIOD_START_TIME],
+            CONF_PERIOD_END_TIME: bonus.get(CONF_BONUS_END_TIME)
+            or period[CONF_PERIOD_END_TIME],
+        }
 
     @property
     def is_on(self) -> bool:
-        return engine.period_contains_time(self._period, dt_util.now())
+        return engine.period_contains_time(self._bonus_window, dt_util.now())
 
 
 class BonusEarnedTodaySensor(_BaseBonusSensor):

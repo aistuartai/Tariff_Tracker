@@ -39,6 +39,7 @@ from .const import (
 
 ACTION_ADD = "__add_new__"
 ACTION_FINISH = "__finish__"
+ACTION_DELETE_PREFIX = "__delete__"
 
 # kind -> (options key, whether this period type supports a no-usage bonus)
 _KIND_CONFIG = {
@@ -183,6 +184,12 @@ class TariffTrackerOptionsFlow(OptionsFlow):
             choice = user_input["action"]
             if choice == ACTION_FINISH:
                 return await self.async_step_init()
+            if choice.startswith(ACTION_DELETE_PREFIX):
+                index = int(choice[len(ACTION_DELETE_PREFIX):])
+                del periods[index]
+                options_key, _ = _KIND_CONFIG[kind]
+                self._options[options_key] = periods
+                return await self._async_periods_menu(None, kind=kind)
             self._editing_kind = kind
             if choice == ACTION_ADD:
                 self._editing_index = None
@@ -191,10 +198,17 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                 self._editing_index = int(choice)
             return await self.async_step_period_form()
 
-        options = [
-            selector.SelectOptionDict(value=str(i), label=f"Edit: {p[CONF_PERIOD_NAME]}")
-            for i, p in enumerate(periods)
-        ]
+        options = []
+        for i, p in enumerate(periods):
+            options.append(
+                selector.SelectOptionDict(value=str(i), label=f"Edit: {p[CONF_PERIOD_NAME]}")
+            )
+            options.append(
+                selector.SelectOptionDict(
+                    value=f"{ACTION_DELETE_PREFIX}{i}",
+                    label=f"Delete: {p[CONF_PERIOD_NAME]}",
+                )
+            )
         options.append(selector.SelectOptionDict(value=ACTION_ADD, label="Add new period"))
         options.append(selector.SelectOptionDict(value=ACTION_FINISH, label="Done"))
 
