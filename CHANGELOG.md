@@ -3,6 +3,21 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.10.0] - 2026-08-06
+
+### Fixed
+- `sensor.<period>_energy_today` (and the other day-scoped counters:
+  `tier_usage_today`, `export_tier_usage_today`, `cost_today`,
+  `export_credit_today`, `bonus_earned_today`, `period_avg_watts_today`)
+  had no self-correction on setup, unlike `cost_this_month` and the
+  billing period totals: they only reset via a callback scheduled for
+  exactly midnight, so a Home Assistant restart or reload landing right
+  on that boundary silently skipped the reset, and yesterday's values -
+  including its peak - stayed baked into today's counters until the
+  following midnight happened to fire cleanly. Now self-corrects on
+  every setup, the same way the billing period and monthly totals
+  already did.
+
 ## [0.9.0] - 2026-08-05
 
 ### Added
@@ -155,6 +170,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   rates, configurable billing cycle (calendar month or fixed N-day cycle),
   and a conditional low-usage bonus per period.
 
+[0.10.0]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.10.0
+[0.9.0]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.9.0
 [0.8.1]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.8.1
 [0.8.0]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.8.0
 [0.7.0]: https://github.com/aistuartai/Tariff_Tracker/releases/tag/v0.7.0

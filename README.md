@@ -86,7 +86,7 @@ directory and restart Home Assistant.
 | `binary_sensor.<period>_bonus_active_window` | On while that period's bonus window is active |
 | `binary_sensor.<period>_bonus_earned_today` | Result once the window closes for the day |
 | `sensor.<period>_avg_power_today` | Average import power (W) implied by that period's energy use so far |
-| `sensor.<period>_energy_today` | kWh used in that period today; resets at midnight, holding its value for the rest of the day once the window closes |
+| `sensor.<period>_energy_today` | kWh used in that period today; resets at midnight (and self-corrects on restart if one lands right on that boundary), holding its value for the rest of the day once the window closes |
 | `sensor.<period>_window` *(diagnostic)* | The period's configured start/end time |
 | `sensor.<period>_rate` *(diagnostic)* | The period's configured $/kWh rate (full tier list as an attribute) |
 | `sensor.<period>_bonus_threshold` *(diagnostic)* | Configured bonus power threshold, in W; only present if the period has a bonus configured. Bonus window + credit amount as attributes |

@@ -204,8 +204,10 @@ class PlanRuntime:
         if saved:
             self._restore(saved)
 
-        self._recompute_billing_bounds(dt_util.now().date())
-        self._recompute_month_bounds(dt_util.now().date())
+        today = dt_util.now().date()
+        self._recompute_billing_bounds(today)
+        self._recompute_month_bounds(today)
+        self._recompute_daily_bounds(today)
 
         energy_sensor = self.options[CONF_IMPORT_ENERGY_SENSOR]
         self._unsub_source = async_track_state_change_event(
@@ -435,6 +437,46 @@ class PlanRuntime:
         if (self.today.year, self.today.month) != (today.year, today.month):
             self.cost_month = 0.0
             self.export_credit_month = 0.0
+
+    def _recompute_daily_bounds(self, today: date) -> None:
+        """Self-correct the day-scoped counters on setup if the last known
+        day is earlier than today.
+
+        _handle_midnight is the only other place these reset, and it only
+        fires from a callback scheduled for exactly 00:00:00 - if Home
+        Assistant is restarting/reloading right at that moment, that
+        specific tick never runs, and yesterday's values (including its
+        peak `_energy_today` total) stay stuck in today's counters until
+        the following midnight happens to land cleanly. cost_this_month
+        and the billing period bounds already get this same self-
+        correction on setup; this mirrors it for the daily counters.
+        """
+        if self.today == today:
+            return
+        now = dt_util.now()
+        self.tier_usage_today = {}
+        self.period_energy_kwh_today = {}
+        self.energy_by_period_today = {
+            name: total
+            for name, total in self.energy_by_period_today.items()
+            if any(
+                p[CONF_PERIOD_NAME] == name and engine.period_contains_time(p, now)
+                for p in self.periods
+            )
+        }
+        self.bonus_earned_today = {}
+        self.period_avg_watts_today = {
+            name: val
+            for name, val in self.period_avg_watts_today.items()
+            if any(
+                p[CONF_PERIOD_NAME] == name and engine.period_contains_time(p, now)
+                for p in self.periods
+            )
+        }
+        self.export_tier_usage_today = {}
+        self.export_credit_today = 0.0
+        self.cost_today = self.daily_charge
+        self.today = today
 
     # ---- energy sensor handling -------------------------------------------
 
