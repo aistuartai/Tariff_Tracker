@@ -46,6 +46,9 @@ async def async_setup_entry(
     ]
     if runtime.options.get(CONF_IMPORT_POWER_SENSOR):
         entities.append(CurrentWindowAvgWattsSensor(runtime, entry))
+    if runtime.has_bonus:
+        entities.append(BonusDaysEarnedSensor(runtime, entry))
+        entities.append(BonusDayPercentageSensor(runtime, entry))
 
     for period in runtime.periods:
         entities.append(PeriodAvgWattsSensor(runtime, entry, period))
@@ -170,6 +173,52 @@ class BonusSavingsSensor(_CostSensor):
     @property
     def native_value(self) -> float:
         return round(self._runtime.bonus_savings_billing_period, 4)
+
+
+class BonusDaysEarnedSensor(_BaseTariffSensor):
+    """Days this billing period whose bonus was earned.
+
+    Counted by the runtime as each day settles. A history_stats count over
+    the bonus binary sensor is not equivalent: reloading the integration
+    after a bonus has been settled re-adds the entity and records a second
+    entry into "on", inflating the total.
+    """
+
+    _attr_native_unit_of_measurement = "d"
+    _attr_state_class = SensorStateClass.TOTAL
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry) -> None:
+        super().__init__(runtime, entry, "bonus_days_earned", "Bonus days earned")
+
+    @property
+    def native_value(self) -> int:
+        return self._runtime.bonus_days_earned_billing_period
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"days_elapsed": self._runtime.bonus_days_elapsed()}
+
+
+class BonusDayPercentageSensor(_BaseTariffSensor):
+    """Share of completed billing-period days whose bonus was earned."""
+
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry) -> None:
+        super().__init__(runtime, entry, "bonus_day_percentage", "Bonus day percentage")
+
+    @property
+    def native_value(self) -> float | None:
+        return self._runtime.bonus_day_percentage()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "days_earned": self._runtime.bonus_days_earned_billing_period,
+            "days_elapsed": self._runtime.bonus_days_elapsed(),
+        }
 
 
 class BillingPeriodStartSensor(_BaseTariffSensor):

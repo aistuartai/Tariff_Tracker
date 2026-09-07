@@ -93,5 +93,11 @@ class BonusEarnedTodaySensor(_BaseBonusSensor):
         )
 
     @property
-    def is_on(self) -> bool | None:
-        return self._runtime.bonus_earned_today.get(self._period[CONF_PERIOD_NAME])
+    def is_on(self) -> bool:
+        # Defaults to False, not None, so the entity reads "off" rather than
+        # "unknown" before the bonus window has been settled for the day.
+        # "unknown" makes the sensor useless as a history_stats or template
+        # input, and hides the state on a dashboard.
+        return bool(
+            self._runtime.bonus_earned_today.get(self._period[CONF_PERIOD_NAME], False)
+        )

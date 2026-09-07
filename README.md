@@ -29,7 +29,8 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
   one and want real-time "how close am I" feedback
 - A `binary_sensor` per bonus-enabled period that flips daily, so you get a
   free calendar-style history of bonus days via Home Assistant's built-in
-  history/logbook — no extra dashboard needed
+  history/logbook — no extra dashboard needed, plus a running count and
+  success percentage of bonus days for the current billing period
 - Optional export/feed-in tracking: define export periods the same way as
   import periods (day filter, tiered rates), and the credit is netted
   straight out of `cost_today` / `cost_this_month` / `cost_this_billing_period`
@@ -77,14 +78,16 @@ directory and restart Home Assistant.
 |---|---|
 | `sensor.<plan>_current_period` | Name of the active import period right now |
 | `sensor.<plan>_current_rate` | $/kWh charged right now |
-| `sensor.<plan>_cost_today` | Running net cost for today (import cost + daily charge − export credit) |
+| `sensor.<plan>_cost_today` | Running net cost for today (import cost + daily charge − export credit − bonus) |
 | `sensor.<plan>_cost_this_month` | Running net cost for the calendar month |
 | `sensor.<plan>_cost_this_billing_period` | Running net cost for the current billing cycle |
 | `sensor.<plan>_bonus_savings_this_billing_period` | Total bonus $ earned so far this cycle |
+| `sensor.<plan>_bonus_days_earned` | Days this cycle whose bonus was earned; only present if a period has a bonus configured. `days_elapsed` as an attribute |
+| `sensor.<plan>_bonus_day_percentage` | Share of completed cycle days whose bonus was earned; only present if a period has a bonus configured. `days_earned`/`days_elapsed` as attributes |
 | `sensor.<plan>_billing_period_start` | Start date of the current billing cycle |
 | `sensor.<plan>_billing_period_days_remaining` | Days left in the current cycle |
 | `binary_sensor.<period>_bonus_active_window` | On while that period's bonus window is active |
-| `binary_sensor.<period>_bonus_earned_today` | Result once the window closes for the day |
+| `binary_sensor.<period>_bonus_earned_today` | Result once the window closes for the day; `off` until then |
 | `sensor.<period>_avg_power_today` | Average import power (W) implied by that period's energy use so far |
 | `sensor.<period>_energy_today` | kWh used in that period today; resets at midnight (and self-corrects on restart if one lands right on that boundary), holding its value for the rest of the day once the window closes |
 | `sensor.<period>_window` *(diagnostic)* | The period's configured start/end time |
@@ -100,6 +103,16 @@ Only present if an export energy sensor is configured:
 | `sensor.<plan>_export_credit_today` | Feed-in credit earned today (already netted into `cost_today`) |
 | `sensor.<plan>_export_credit_this_month` | Feed-in credit earned this month |
 | `sensor.<plan>_export_credit_this_billing_period` | Feed-in credit earned this billing cycle |
+
+### Counting bonus days
+
+Use `sensor.<plan>_bonus_days_earned` rather than a `history_stats` count
+over `binary_sensor.<period>_bonus_earned_today`. Reloading the integration
+after a bonus has settled re-adds the binary sensor, which records a second
+entry into `on` — `history_stats` counts that as another bonus day, so the
+total creeps above the number of days that have actually passed. The
+integration's own counter is incremented once per day as it settles and is
+unaffected by reloads and restarts.
 
 ## Buttons created per plan
 

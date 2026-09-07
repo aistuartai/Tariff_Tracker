@@ -3,6 +3,55 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.11.0] - 2026-09-07
+
+### Added
+- `sensor.<plan>_bonus_days_earned` and `sensor.<plan>_bonus_day_percentage`,
+  for plans with at least one bonus-enabled period. The count is kept by
+  the integration as each day settles, so it is not affected by reloads.
+  Both carry `days_earned`/`days_elapsed` attributes. If you were deriving
+  a bonus success rate from a `history_stats` count over
+  `binary_sensor.<period>_bonus_earned_today`, these replace it — see
+  below for why that approach over-counts.
+
+### Fixed
+- An earned bonus was only ever deducted from
+  `sensor.<plan>_cost_this_billing_period`. `cost_today` and
+  `cost_this_month` were left overstated by the bonus amount for every day
+  it was earned, while usage and export credit correctly adjusted all
+  three. A plan earning a $1 bonus most nights read roughly $30/month too
+  high.
+- Editing the billing cycle in the options flow wiped the billing period's
+  accumulated cost, bonus savings and per-period energy totals. The reset
+  was triggered by "the computed period start changed", which cannot tell
+  a genuine rollover from a config edit — and editing the cycle start by a
+  single day reloads the entry, recomputes a different start, and zeroed
+  the lot. The reset now fires only when today has actually reached the
+  end of the period being tracked; anything else re-anchors the dates and
+  keeps the totals.
+- The first day of every billing period was missing its daily supply
+  charge. The midnight handler added the charge to the billing-period
+  total and then rolled the period bounds, wiping it in the same tick.
+  Bounds are now rolled before the day's charges are applied.
+- A missed midnight tick (Home Assistant down or restarting at exactly
+  00:00:00) left that day's supply charge out of `cost_this_month` and
+  `cost_this_billing_period`, even though `cost_today` self-corrected. The
+  setup self-correction now applies the charge to all three.
+- A bonus whose window closed while Home Assistant was down, restarting or
+  reloading was never credited at all — the finalizer only ran from a
+  callback scheduled for one exact second, and the next midnight cleared
+  the energy figures it needed. Setup now settles any of today's bonus
+  windows that closed without being finalized.
+- The bonus could be credited twice in a day. Settlement is now recorded
+  per period per day, which also covers the DST fall-back repeating the
+  hour the finalizer is scheduled in.
+
+### Changed
+- `binary_sensor.<period>_bonus_earned_today` now reads `off` instead of
+  `unknown` before the day's window has been settled. `unknown` made it
+  unusable as a template or statistics input and hid the state on
+  dashboards.
+
 ## [0.10.0] - 2026-08-06
 
 ### Fixed

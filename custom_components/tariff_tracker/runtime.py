@@ -4,6 +4,7 @@ a single listener per source sensor, not one per entity.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Callable
@@ -41,6 +42,8 @@ from .const import (
     DAYS_ALL,
     DOMAIN,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 
@@ -88,6 +91,12 @@ class PlanRuntime:
     energy_by_period_today: dict[str, float] = field(default_factory=dict)
     bonus_earned_today: dict[str, bool | None] = field(default_factory=dict)
     bonus_samples: dict[str, BonusWindowSample] = field(default_factory=dict)
+    # ISO date string per period name, recording the last day that period's
+    # bonus was finalized. Two jobs: stop the finalizer crediting the same
+    # day twice (a DST fall-back repeats the hour its callback is scheduled
+    # in), and let setup settle a bonus whose end time passed while Home
+    # Assistant was down.
+    bonus_finalized_for: dict[str, str] = field(default_factory=dict)
 
     last_export_kwh: float | None = None
     export_tier_usage_today: dict[str, float] = field(default_factory=dict)
@@ -115,6 +124,13 @@ class PlanRuntime:
     cost_month: float = 0.0
     cost_billing_period: float = 0.0
     bonus_savings_billing_period: float = 0.0
+    # Number of days in the current billing period whose bonus was earned.
+    # Incremented by the finalizer, so it counts settled days directly
+    # rather than inferring them from binary sensor state changes - a
+    # history_stats count over the bonus binary sensor double-counts any
+    # day where the integration is reloaded after the bonus is settled,
+    # because re-adding the entity records a second entry into "on".
+    bonus_days_earned_billing_period: int = 0
 
     export_credit_today: float = 0.0
     export_credit_month: float = 0.0
@@ -184,6 +200,26 @@ class PlanRuntime:
             return None
         return (self.billing_period_end - dt_util.now().date()).days
 
+    @property
+    def has_bonus(self) -> bool:
+        return any(p.get(CONF_PERIOD_BONUS) for p in self.periods)
+
+    def bonus_days_elapsed(self) -> int | None:
+        """Whole days of the billing period that have finished.
+
+        Today is excluded: its bonus windows may not have closed yet, so
+        counting it would drag the success rate down for most of the day.
+        """
+        if self.billing_period_start is None:
+            return None
+        return max((dt_util.now().date() - self.billing_period_start).days, 0)
+
+    def bonus_day_percentage(self) -> float | None:
+        elapsed = self.bonus_days_elapsed()
+        if not elapsed:
+            return None
+        return round(self.bonus_days_earned_billing_period / elapsed * 100, 1)
+
     def register_update_callback(self, cb: Callable[[], None]) -> Callable[[], None]:
         self.update_callbacks.append(cb)
 
@@ -204,10 +240,20 @@ class PlanRuntime:
         if saved:
             self._restore(saved)
 
-        today = dt_util.now().date()
+        now = dt_util.now()
+        today = now.date()
+        # Whether this setup is resuming a day already in progress. A first
+        # ever run has no history to settle, and a run on a later day has
+        # had its inputs cleared by _recompute_daily_bounds below - in
+        # either case a bonus catch-up would credit against zero usage and
+        # hand out a bonus that was never earned.
+        resuming_same_day = bool(saved) and self.today == today
+
         self._recompute_billing_bounds(today)
         self._recompute_month_bounds(today)
         self._recompute_daily_bounds(today)
+        if resuming_same_day and self._catch_up_bonuses(now):
+            await self._async_save()
 
         energy_sensor = self.options[CONF_IMPORT_ENERGY_SENSOR]
         self._unsub_source = async_track_state_change_event(
@@ -293,10 +339,14 @@ class PlanRuntime:
         self.tier_usage_today = saved.get("tier_usage_today", {})
         self.energy_by_period_today = saved.get("energy_by_period_today", {})
         self.bonus_earned_today = saved.get("bonus_earned_today", {})
+        self.bonus_finalized_for = saved.get("bonus_finalized_for", {})
         self.cost_today = saved.get("cost_today", 0.0)
         self.cost_month = saved.get("cost_month", 0.0)
         self.cost_billing_period = saved.get("cost_billing_period", 0.0)
         self.bonus_savings_billing_period = saved.get("bonus_savings_billing_period", 0.0)
+        self.bonus_days_earned_billing_period = saved.get(
+            "bonus_days_earned_billing_period", 0
+        )
         self.last_export_kwh = saved.get("last_export_kwh")
         self.export_tier_usage_today = saved.get("export_tier_usage_today", {})
         self.export_credit_today = saved.get("export_credit_today", 0.0)
@@ -321,6 +371,17 @@ class PlanRuntime:
         if saved.get("billing_period_end"):
             self.billing_period_end = date.fromisoformat(saved["billing_period_end"])
 
+        # Upgrade path: installs from before bonus_finalized_for existed have
+        # no record of which bonuses already settled today, and the setup
+        # catch-up would credit them a second time. The old code set
+        # bonus_earned_today[name] at the moment it finalized, so treat any
+        # entry there as already settled for the stored day.
+        if "bonus_finalized_for" not in saved and self.bonus_earned_today:
+            today_iso = self.today.isoformat()
+            self.bonus_finalized_for = {
+                name: today_iso for name in self.bonus_earned_today
+            }
+
     async def _async_save(self) -> None:
         if not self._store:
             return
@@ -330,10 +391,12 @@ class PlanRuntime:
                 "tier_usage_today": self.tier_usage_today,
                 "energy_by_period_today": self.energy_by_period_today,
                 "bonus_earned_today": self.bonus_earned_today,
+                "bonus_finalized_for": self.bonus_finalized_for,
                 "cost_today": self.cost_today,
                 "cost_month": self.cost_month,
                 "cost_billing_period": self.cost_billing_period,
                 "bonus_savings_billing_period": self.bonus_savings_billing_period,
+                "bonus_days_earned_billing_period": self.bonus_days_earned_billing_period,
                 "last_export_kwh": self.last_export_kwh,
                 "export_tier_usage_today": self.export_tier_usage_today,
                 "export_credit_today": self.export_credit_today,
@@ -382,6 +445,7 @@ class PlanRuntime:
         if reset_billing_period:
             self.cost_billing_period = 0.0
             self.bonus_savings_billing_period = 0.0
+            self.bonus_days_earned_billing_period = 0
             self.export_credit_billing_period = 0.0
             self.period_energy_kwh_billing_period = {}
             self.export_period_energy_kwh_billing_period = {}
@@ -412,11 +476,38 @@ class PlanRuntime:
         start, end = engine.billing_period_bounds(
             cycle_type, cycle_days, cycle_start, today
         )
-        if self.billing_period_start != start:
-            self.billing_period_start = start
-            self.billing_period_end = end
+
+        # Only wipe the running totals when the billing period has genuinely
+        # elapsed - i.e. today has reached the end of the period we were
+        # last tracking. Testing "did the computed start change?" instead
+        # conflates a real rollover with an edit to the cycle config, and
+        # editing the cycle start by even one day in the options flow
+        # reloads the entry, recomputes a different start, and silently
+        # zeroes a whole period's accumulated cost and bonuses.
+        #
+        # Anything else (a config edit mid-period, a restart, a reload)
+        # re-anchors the dates and keeps the money. A first run has no
+        # stored end, and its counters are zero already.
+        rolled_over = self.billing_period_end is not None and today >= self.billing_period_end
+
+        if self.billing_period_start != start or self.billing_period_end != end:
+            _LOGGER.debug(
+                "%s: billing period bounds %s..%s -> %s..%s (%s)",
+                self.plan_name,
+                self.billing_period_start,
+                self.billing_period_end,
+                start,
+                end,
+                "rolled over, counters reset" if rolled_over else "re-anchored, counters kept",
+            )
+
+        self.billing_period_start = start
+        self.billing_period_end = end
+
+        if rolled_over:
             self.cost_billing_period = 0.0
             self.bonus_savings_billing_period = 0.0
+            self.bonus_days_earned_billing_period = 0
             self.export_credit_billing_period = 0.0
             self.period_energy_kwh_billing_period = {}
             self.export_period_energy_kwh_billing_period = {}
@@ -476,6 +567,13 @@ class PlanRuntime:
         self.export_tier_usage_today = {}
         self.export_credit_today = 0.0
         self.cost_today = self.daily_charge
+        # _handle_midnight also adds the new day's supply charge to the
+        # running totals. This path only runs when that tick was missed, so
+        # it has to do the same or the day's charge is missing from the
+        # month and billing-period figures while showing correctly in
+        # "cost today".
+        self.cost_month += self.daily_charge
+        self.cost_billing_period += self.daily_charge
         self.today = today
 
     # ---- energy sensor handling -------------------------------------------
@@ -623,45 +721,114 @@ class PlanRuntime:
 
     # ---- bonus finalization -------------------------------------------
 
+    def _finalize_bonus(self, period_name: str, now: datetime) -> bool:
+        """Settle one period's bonus for the day `now` falls on.
+
+        Returns True if it settled the bonus, False if there was nothing to
+        do (no such period, no bonus configured, or already settled today).
+        Callers own saving and notifying.
+        """
+        period = next(
+            (p for p in self.periods if p[CONF_PERIOD_NAME] == period_name), None
+        )
+        if period is None:
+            return False
+        bonus = period.get(CONF_PERIOD_BONUS)
+        if not bonus:
+            return False
+
+        # One settlement per period per day. Without this the bonus can be
+        # credited twice: the finalizer is scheduled by wall-clock time, and
+        # a DST fall-back repeats the hour it sits in.
+        today_iso = now.date().isoformat()
+        if self.bonus_finalized_for.get(period_name) == today_iso:
+            return False
+
+        threshold = bonus[CONF_BONUS_THRESHOLD_W]
+        if bonus.get("calc_mode") == BONUS_CALC_LIVE_POWER and period_name in self.bonus_samples:
+            avg_w = self.bonus_samples[period_name].average()
+        else:
+            start_t = engine.parse_time(
+                bonus.get(CONF_BONUS_START_TIME) or period[CONF_PERIOD_START_TIME]
+            )
+            end_t = engine.parse_time(
+                bonus.get(CONF_BONUS_END_TIME) or period[CONF_PERIOD_END_TIME]
+            )
+            window_hours = (
+                datetime.combine(date.min, end_t)
+                - datetime.combine(date.min, start_t)
+            ).total_seconds() / 3600
+            energy = self.energy_by_period_today.get(period_name, 0.0)
+            avg_w = engine.avg_watts_from_energy(energy, window_hours)
+
+        earned = avg_w < threshold
+        self.bonus_earned_today[period_name] = earned
+        self.bonus_finalized_for[period_name] = today_iso
+        if earned:
+            # The bonus is a credit against the day's bill, so it belongs in
+            # every cost accumulator - the same three that usage and export
+            # credit already adjust. Previously only the billing-period
+            # total carried it, leaving "cost today" and "cost this month"
+            # overstated by the bonus amount for every day it was earned.
+            amount = bonus["amount"]
+            self.cost_today -= amount
+            self.cost_month -= amount
+            self.cost_billing_period -= amount
+            self.bonus_savings_billing_period += amount
+            self.bonus_days_earned_billing_period += 1
+
+        if period_name in self.bonus_samples:
+            self.bonus_samples[period_name].reset()
+        self.energy_by_period_today.pop(period_name, None)
+        return True
+
+    def _bonus_window_end(self, period: dict[str, Any]):
+        """The time of day a period's bonus is settled at."""
+        bonus = period.get(CONF_PERIOD_BONUS)
+        if not bonus:
+            return None
+        return engine.parse_time(
+            bonus.get(CONF_BONUS_END_TIME) or period[CONF_PERIOD_END_TIME]
+        )
+
+    def _catch_up_bonuses(self, now: datetime) -> bool:
+        """Settle any bonus whose window already closed today but was never
+        finalized.
+
+        _finalize_bonus only ever runs from a callback scheduled for one
+        exact wall-clock second. If Home Assistant is down, restarting or
+        reloading at that second, the tick never fires and the day's bonus
+        is silently never credited - the cost accumulators end the period
+        overstated with no way to tell after the fact, because the next
+        midnight clears the underlying energy figures.
+
+        Only today's bonuses can be recovered: once the day rolls over the
+        inputs are gone. Mirrors the same self-correction the daily,
+        monthly and billing-period counters already get on setup.
+        """
+        settled = False
+        for period in self.periods:
+            end_t = self._bonus_window_end(period)
+            if end_t is None:
+                continue
+            if now.time() < end_t:
+                continue
+            name = period[CONF_PERIOD_NAME]
+            if self._finalize_bonus(name, now):
+                settled = True
+                _LOGGER.debug(
+                    "%s: settled missed bonus for period %s (window closed %s)",
+                    self.plan_name,
+                    name,
+                    end_t,
+                )
+        return settled
+
     def _make_bonus_finalizer(self, period_name: str) -> Callable[[datetime], None]:
         @callback
         def _finalize(now: datetime) -> None:
-            period = next(
-                (p for p in self.periods if p[CONF_PERIOD_NAME] == period_name), None
-            )
-            if period is None:
+            if not self._finalize_bonus(period_name, now):
                 return
-            bonus = period.get(CONF_PERIOD_BONUS)
-            if not bonus:
-                return
-
-            threshold = bonus[CONF_BONUS_THRESHOLD_W]
-            if bonus.get("calc_mode") == BONUS_CALC_LIVE_POWER and period_name in self.bonus_samples:
-                avg_w = self.bonus_samples[period_name].average()
-            else:
-                start_t = engine.parse_time(
-                    bonus.get(CONF_BONUS_START_TIME) or period[CONF_PERIOD_START_TIME]
-                )
-                end_t = engine.parse_time(
-                    bonus.get(CONF_BONUS_END_TIME) or period[CONF_PERIOD_END_TIME]
-                )
-                window_hours = (
-                    datetime.combine(date.min, end_t)
-                    - datetime.combine(date.min, start_t)
-                ).total_seconds() / 3600
-                energy = self.energy_by_period_today.get(period_name, 0.0)
-                avg_w = engine.avg_watts_from_energy(energy, window_hours)
-
-            earned = avg_w < threshold
-            self.bonus_earned_today[period_name] = earned
-            if earned:
-                self.cost_billing_period -= bonus["amount"]
-                self.bonus_savings_billing_period += bonus["amount"]
-
-            if period_name in self.bonus_samples:
-                self.bonus_samples[period_name].reset()
-            self.energy_by_period_today.pop(period_name, None)
-
             self.hass.async_create_task(self._async_save())
             self._notify()
 
@@ -754,15 +921,20 @@ class PlanRuntime:
         }
         self.export_tier_usage_today = {}
         self.export_credit_today = 0.0
-        self.cost_today = self.daily_charge
-        self.cost_billing_period += self.daily_charge
 
+        # Roll the period bounds *before* applying the new day's charges.
+        # A rollover zeroes the billing-period totals, so charging first
+        # meant the first day of every billing period had its supply charge
+        # added and then immediately wiped - that day was silently free.
+        self._recompute_billing_bounds(today)
         if today.month != self.today.month:
             self.cost_month = 0.0
             self.export_credit_month = 0.0
+
+        self.cost_today = self.daily_charge
+        self.cost_billing_period += self.daily_charge
         self.cost_month += self.daily_charge
 
-        self._recompute_billing_bounds(today)
         self.today = today
 
         self.hass.async_create_task(self._async_save())
