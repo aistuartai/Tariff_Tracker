@@ -8,6 +8,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
 from homeassistant.helpers import selector
 
+from . import tariff_engine as engine
 from .const import (
     BILLING_CYCLE_CALENDAR_MONTH,
     BILLING_CYCLE_EVERY_N_DAYS,
@@ -29,6 +30,7 @@ from .const import (
     CONF_PERIOD_NAME,
     CONF_PERIOD_START_TIME,
     CONF_PERIOD_TIERS,
+    CONF_PERIOD_WINDOWS,
     CONF_PERIODS,
     CONF_TIER_LIMIT_KWH,
     CONF_TIER_RATE,
@@ -36,6 +38,61 @@ from .const import (
     DAYS_WEEKDAYS,
     DAYS_WEEKENDS,
 )
+
+# How many windows one period's form exposes. Window 1 is required; the rest
+# are optional pairs. A period made of several disjoint windows (a shoulder
+# band split by peak and off-peak blocks, say) needs more than one, but in
+# practice never many - raising this only means adding form fields.
+MAX_PERIOD_WINDOWS = 3
+
+
+def _window_field_names(index: int) -> tuple[str, str]:
+    """Form field names for window `index` (0-based).
+
+    Window 0 reuses the period's own start_time/end_time fields so existing
+    configs, translations and muscle memory are unchanged.
+    """
+    if index == 0:
+        return CONF_PERIOD_START_TIME, CONF_PERIOD_END_TIME
+    return f"window{index + 1}_start_time", f"window{index + 1}_end_time"
+
+
+def _collect_windows(
+    user_input: dict[str, Any]
+) -> tuple[list[dict[str, str]], str | None]:
+    """Build the window list from submitted form fields.
+
+    Returns (windows, error_key). Blank optional pairs are skipped; a pair
+    with only one half filled in is an error, as is a zero-length window or
+    two windows that overlap.
+    """
+    windows: list[dict[str, str]] = []
+    for i in range(MAX_PERIOD_WINDOWS):
+        start_field, end_field = _window_field_names(i)
+        start = user_input.get(start_field)
+        end = user_input.get(end_field)
+        if not start and not end:
+            continue
+        if not start or not end:
+            return [], "window_incomplete"
+        if start == end:
+            return [], "start_end_equal"
+        windows.append({CONF_PERIOD_START_TIME: start, CONF_PERIOD_END_TIME: end})
+
+    if not windows:
+        return [], "start_end_equal"
+    if engine.windows_overlap(
+        [
+            (
+                engine.parse_time(w[CONF_PERIOD_START_TIME]),
+                engine.parse_time(w[CONF_PERIOD_END_TIME]),
+            )
+            for w in windows
+        ]
+    ):
+        return [], "windows_overlap"
+    return windows, None
+
 
 ACTION_ADD = "__add_new__"
 ACTION_FINISH = "__finish__"
@@ -244,8 +301,9 @@ class TariffTrackerOptionsFlow(OptionsFlow):
         existing_bonus = existing.get(CONF_PERIOD_BONUS) or {}
 
         if user_input is not None:
-            if user_input[CONF_PERIOD_START_TIME] == user_input[CONF_PERIOD_END_TIME]:
-                errors["base"] = "start_end_equal"
+            windows, window_error = _collect_windows(user_input)
+            if window_error:
+                errors["base"] = window_error
             else:
                 tiers = [
                     {
@@ -273,8 +331,13 @@ class TariffTrackerOptionsFlow(OptionsFlow):
 
                 period = {
                     CONF_PERIOD_NAME: user_input[CONF_PERIOD_NAME],
-                    CONF_PERIOD_START_TIME: user_input[CONF_PERIOD_START_TIME],
-                    CONF_PERIOD_END_TIME: user_input[CONF_PERIOD_END_TIME],
+                    # start_time/end_time mirror the first window. The engine
+                    # reads CONF_PERIOD_WINDOWS, but keeping these in sync
+                    # means periods saved here still make sense to anything
+                    # reading the original single-window keys.
+                    CONF_PERIOD_START_TIME: windows[0][CONF_PERIOD_START_TIME],
+                    CONF_PERIOD_END_TIME: windows[0][CONF_PERIOD_END_TIME],
+                    CONF_PERIOD_WINDOWS: windows,
                     CONF_PERIOD_DAYS: user_input[CONF_PERIOD_DAYS],
                     CONF_PERIOD_TIERS: tiers,
                     CONF_PERIOD_BONUS: bonus,
@@ -301,6 +364,38 @@ class TariffTrackerOptionsFlow(OptionsFlow):
             else vol.Optional("tier1_limit_kwh")
         )
 
+        # Existing windows, padded so window 1 always has a default to show
+        # (blank for a brand-new period). Periods saved before multi-window
+        # support have no window list, so fall back to their start/end pair.
+        existing_windows = list(existing.get(CONF_PERIOD_WINDOWS) or [])
+        if not existing_windows:
+            existing_windows = [
+                {
+                    CONF_PERIOD_START_TIME: existing.get(CONF_PERIOD_START_TIME),
+                    CONF_PERIOD_END_TIME: existing.get(CONF_PERIOD_END_TIME),
+                }
+            ]
+        while len(existing_windows) < MAX_PERIOD_WINDOWS:
+            existing_windows.append({})
+
+        # Optional extra windows. Time selectors are only given a default
+        # when a real value exists - an explicit default of None makes the
+        # selector choke, the same way the optional number selectors do.
+        window_fields: dict[Any, Any] = {}
+        for i in range(1, MAX_PERIOD_WINDOWS):
+            start_field, end_field = _window_field_names(i)
+            for field_name, conf_key in (
+                (start_field, CONF_PERIOD_START_TIME),
+                (end_field, CONF_PERIOD_END_TIME),
+            ):
+                value = existing_windows[i].get(conf_key)
+                key = (
+                    vol.Optional(field_name, default=value)
+                    if value is not None
+                    else vol.Optional(field_name)
+                )
+                window_fields[key] = selector.TimeSelector()
+
         rate_unit = "$/kWh you're charged" if kind == "import" else "$/kWh you're credited"
 
         schema_dict: dict[Any, Any] = {
@@ -309,11 +404,13 @@ class TariffTrackerOptionsFlow(OptionsFlow):
             ): str,
             vol.Required(
                 CONF_PERIOD_START_TIME,
-                default=existing.get(CONF_PERIOD_START_TIME),
+                default=existing_windows[0].get(CONF_PERIOD_START_TIME),
             ): selector.TimeSelector(),
             vol.Required(
-                CONF_PERIOD_END_TIME, default=existing.get(CONF_PERIOD_END_TIME)
+                CONF_PERIOD_END_TIME,
+                default=existing_windows[0].get(CONF_PERIOD_END_TIME),
             ): selector.TimeSelector(),
+            **window_fields,
             vol.Required(
                 CONF_PERIOD_DAYS, default=existing.get(CONF_PERIOD_DAYS, DAYS_ALL)
             ): selector.SelectSelector(

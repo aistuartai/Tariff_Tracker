@@ -16,6 +16,7 @@ try:
         CONF_PERIOD_NAME,
         CONF_PERIOD_START_TIME,
         CONF_PERIOD_TIERS,
+        CONF_PERIOD_WINDOWS,
         CONF_TIER_LIMIT_KWH,
         CONF_TIER_RATE,
         DAYS_WEEKDAYS,
@@ -29,6 +30,7 @@ except ImportError:  # imported standalone (e.g. from tests) without the package
         CONF_PERIOD_NAME,
         CONF_PERIOD_START_TIME,
         CONF_PERIOD_TIERS,
+        CONF_PERIOD_WINDOWS,
         CONF_TIER_LIMIT_KWH,
         CONF_TIER_RATE,
         DAYS_WEEKDAYS,
@@ -53,22 +55,91 @@ def period_applies_to_day(period: dict[str, Any], day: date) -> bool:
     return True  # DAYS_ALL or unset
 
 
-def period_contains_time(period: dict[str, Any], at: datetime) -> bool:
-    """Return True if `at` falls inside period's time window on its own day.
+def period_windows(period: dict[str, Any]) -> list[tuple[time, time]]:
+    """Return every (start, end) window a period covers.
+
+    A period may be split into several disjoint windows - a shoulder band
+    interrupted by peak and off-peak blocks, say - which a single
+    start/end pair cannot express. Falls back to the period's own
+    start_time/end_time when no explicit window list is stored, so configs
+    written before multi-window support keep working untouched.
+    """
+    raw = period.get(CONF_PERIOD_WINDOWS)
+    if raw:
+        return [
+            (parse_time(w[CONF_PERIOD_START_TIME]), parse_time(w[CONF_PERIOD_END_TIME]))
+            for w in raw
+        ]
+    start = period.get(CONF_PERIOD_START_TIME)
+    end = period.get(CONF_PERIOD_END_TIME)
+    if start is None or end is None:
+        return []
+    return [(parse_time(start), parse_time(end))]
+
+
+def window_contains_time(start: time, end: time, at: time) -> bool:
+    """Return True if `at` falls inside one (start, end) window.
 
     Supports overnight windows (start > end, e.g. 22:00-06:00).
     """
+    if start <= end:
+        return start <= at < end
+    # Overnight window wraps past midnight.
+    return at >= start or at < end
+
+
+def window_hours(start: time, end: time) -> float:
+    """Length of one window in hours, counting an overnight wrap correctly."""
+    start_s = start.hour * 3600 + start.minute * 60 + start.second
+    end_s = end.hour * 3600 + end.minute * 60 + end.second
+    span = end_s - start_s
+    if span <= 0:
+        span += 24 * 3600
+    return span / 3600
+
+
+def period_total_hours(period: dict[str, Any]) -> float:
+    """Total hours a period is open across all of its windows."""
+    return sum(window_hours(s, e) for s, e in period_windows(period))
+
+
+def format_period_windows(period: dict[str, Any]) -> str:
+    """Human-readable window list, e.g. "15:00-16:00, 23:00-12:00"."""
+    return ", ".join(
+        f"{s.strftime('%H:%M')}-{e.strftime('%H:%M')}"
+        for s, e in period_windows(period)
+    )
+
+
+def period_contains_time(period: dict[str, Any], at: datetime) -> bool:
+    """Return True if `at` falls inside any of the period's windows."""
     if not period_applies_to_day(period, at.date()):
         return False
 
-    start = parse_time(period[CONF_PERIOD_START_TIME])
-    end = parse_time(period[CONF_PERIOD_END_TIME])
     now = at.time()
+    return any(
+        window_contains_time(start, end, now) for start, end in period_windows(period)
+    )
 
-    if start <= end:
-        return start <= now < end
-    # Overnight window wraps past midnight.
-    return now >= start or now < end
+
+def windows_overlap(windows: list[tuple[time, time]]) -> bool:
+    """Return True if any two windows in one period overlap.
+
+    Overlapping windows within a single period would double-count nothing
+    on their own (the period is simply "open"), but they almost always mean
+    the user mistyped, and they make the period's total open hours - and so
+    its average power - wrong.
+    """
+    for i, (a_start, a_end) in enumerate(windows):
+        for b_start, b_end in windows[i + 1:]:
+            # Sample both windows' own boundaries: two windows overlap iff
+            # one contains the other's start. Cheaper and wrap-safe versus
+            # normalising both to absolute minute ranges.
+            if window_contains_time(a_start, a_end, b_start) or window_contains_time(
+                b_start, b_end, a_start
+            ):
+                return True
+    return False
 
 
 def find_active_period(

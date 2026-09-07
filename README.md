@@ -19,6 +19,9 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 - Daily, monthly, and billing-period (calendar month **or** a fixed N-day
   cycle from a start date, e.g. "every 28 days") cost totals
 - Any number of time-of-use periods, each with:
+  - one or more time windows, so a band split by other periods (e.g. a
+    shoulder rate applying both before peak and again overnight) is a
+    single period rather than two with duplicated rates
   - a day filter (every day / weekdays / weekends)
   - a flat rate, or a two-tier rate (e.g. "first 50 kWh/day free, then a
     balance rate")
@@ -90,7 +93,7 @@ directory and restart Home Assistant.
 | `binary_sensor.<period>_bonus_earned_today` | Result once the window closes for the day; `off` until then |
 | `sensor.<period>_avg_power_today` | Average import power (W) implied by that period's energy use so far |
 | `sensor.<period>_energy_today` | kWh used in that period today; resets at midnight (and self-corrects on restart if one lands right on that boundary), holding its value for the rest of the day once the window closes |
-| `sensor.<period>_window` *(diagnostic)* | The period's configured start/end time |
+| `sensor.<period>_window` *(diagnostic)* | The period's configured window(s), e.g. `15:00-16:00, 23:00-12:00`. Full list, count and total hours as attributes |
 | `sensor.<period>_rate` *(diagnostic)* | The period's configured $/kWh rate (full tier list as an attribute) |
 | `sensor.<period>_bonus_threshold` *(diagnostic)* | Configured bonus power threshold, in W; only present if the period has a bonus configured. Bonus window + credit amount as attributes |
 
@@ -103,6 +106,38 @@ Only present if an export energy sensor is configured:
 | `sensor.<plan>_export_credit_today` | Feed-in credit earned today (already netted into `cost_today`) |
 | `sensor.<plan>_export_credit_this_month` | Feed-in credit earned this month |
 | `sensor.<plan>_export_credit_this_billing_period` | Feed-in credit earned this billing cycle |
+
+### Periods with more than one window
+
+Retailers often price a band that isn't one contiguous block — a shoulder
+rate that applies from 3pm until peak starts, and again from 11pm through
+to midday. Configure that as **one** period with two windows, not two
+periods sharing a rate.
+
+In the period form, window 1 is required and windows 2 and 3 are optional;
+fill in both halves of a pair to add a window, or clear both to remove it.
+Windows may wrap past midnight and must not overlap each other.
+
+Keeping the band as one period matters beyond tidiness:
+
+- **Tiers are per period, per day.** Split across two periods, a "first
+  50 kWh/day at $0" allowance is granted *twice* — once to each fragment.
+- kWh totals (today, billing period, lifetime) are one figure for the band
+  rather than two you have to add up.
+- `sensor.<period>_avg_power_today` averages over the band's whole open
+  time for the day instead of restarting at each fragment.
+
+Periods saved before this existed keep working untouched — a period with no
+window list simply uses its own start/end time as its single window. Editing
+and saving a period writes the window list.
+
+### Merging two existing periods into one
+
+Add the second period's window to the first, then delete the second. Note
+that per-period kWh counters are keyed by period name, so the deleted
+period's billing-period and lifetime totals are dropped rather than moved.
+Do it just after a billing period rolls over if you want the running totals
+to stay meaningful.
 
 ### Counting bonus days
 

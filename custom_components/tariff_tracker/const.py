@@ -22,6 +22,13 @@ CONF_EXPORT_PERIODS = "export_periods"
 CONF_PERIOD_NAME = "name"
 CONF_PERIOD_START_TIME = "start_time"
 CONF_PERIOD_END_TIME = "end_time"
+# Optional list of {start_time, end_time} dicts, for a period made of several
+# disjoint windows (e.g. a shoulder band split by peak and off-peak blocks).
+# When absent the period's own start_time/end_time are its single window, so
+# configs written before multi-window support keep working. When present, the
+# period's start_time/end_time mirror the first window for display and for
+# anything still reading the single-window keys.
+CONF_PERIOD_WINDOWS = "windows"
 CONF_PERIOD_DAYS = "days"
 CONF_PERIOD_TIERS = "tiers"
 CONF_PERIOD_BONUS = "bonus"

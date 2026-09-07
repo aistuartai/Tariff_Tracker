@@ -3,6 +3,40 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.12.0] - 2026-09-07
+
+### Added
+- A period can now cover **several disjoint time windows**. Some bands are
+  split by other periods - a shoulder rate applying both just before peak
+  and again overnight - which a single start/end pair cannot express, so
+  they had to be configured as two separate periods with duplicated rates.
+  The period form now takes up to three windows; leave windows 2 and 3
+  blank for the usual single-window period.
+  Merging two such periods into one means their kWh totals, daily tier
+  allowance and average power are counted once for the band rather than
+  once per fragment. Tiering in particular was wrong when split: each
+  fragment had its own daily allowance.
+- `sensor.<period>_window` now lists every window (e.g.
+  "15:00-16:00, 23:00-12:00") and carries `windows`, `window_count` and
+  `total_hours` attributes. `start_time`/`end_time` remain as the first
+  window for anything already reading them.
+
+### Fixed
+- A bonus window that wraps midnight (e.g. 23:00-06:00) computed a
+  negative window length, making average power negative and so awarding
+  the bonus unconditionally. Windows that wrap are now measured correctly.
+- `sensor.<period>_avg_power_today` restarted its elapsed-time denominator
+  every time one of the period's windows closed, and a restart mid-window
+  left it with no denominator at all until the next window opened. Open
+  time is now accumulated across all of today's windows and persisted
+  across restarts.
+
+### Changed
+- Existing periods are untouched and need no migration: a period with no
+  explicit window list uses its own start/end time as its single window,
+  exactly as before. Re-saving a period in the options flow writes the
+  window list.
+
 ## [0.11.0] - 2026-09-07
 
 ### Added

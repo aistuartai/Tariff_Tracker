@@ -55,8 +55,8 @@
         "title": "{kind} period details",
         "data": {
           "name": "Period name",
-          "start_time": "Start time",
-          "end_time": "End time",
+          "start_time": "Window 1 start time",
+          "end_time": "Window 1 end time",
           "days": "Applies on",
           "tier1_limit_kwh": "First-tier limit (kWh/day, blank = flat rate for whole period)",
           "tier1_rate": "First-tier rate",
@@ -64,13 +64,20 @@
           "bonus_enabled": "Enable no-usage bonus for this period",
           "bonus_amount": "Bonus amount",
           "bonus_threshold_w": "Average import must stay below (W)",
-          "bonus_calc_mode": "Bonus calculation method"
-        }
+          "bonus_calc_mode": "Bonus calculation method",
+          "window2_start_time": "Window 2 start time (optional)",
+          "window2_end_time": "Window 2 end time (optional)",
+          "window3_start_time": "Window 3 start time (optional)",
+          "window3_end_time": "Window 3 end time (optional)"
+        },
+        "description": "A period can cover several separate windows - use windows 2 and 3 if this band is split by other periods (e.g. a shoulder rate that applies both before peak and overnight). Leave them blank for a single window."
       }
     },
     "error": {
       "start_date_required": "A start date is required for a custom-length billing cycle",
-      "start_end_equal": "Start and end time cannot be the same"
+      "start_end_equal": "Start and end time cannot be the same",
+      "windows_overlap": "Two windows in this period overlap. Each window must cover a separate part of the day.",
+      "window_incomplete": "A window needs both a start and an end time. Fill in both, or clear both to remove it."
     }
   },
   "selector": {

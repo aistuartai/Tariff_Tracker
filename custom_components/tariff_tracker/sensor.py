@@ -10,6 +10,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import tariff_engine as engine
 from .const import (
     CONF_BONUS_AMOUNT,
     CONF_BONUS_END_TIME,
@@ -422,15 +423,14 @@ class ExportPeriodEnergyTotalSensor(_BaseTariffSensor):
 
 
 class PeriodWindowSensor(_BaseTariffSensor):
-    """Diagnostic: the configured start/end time of a tariff period."""
+    """Diagnostic: the configured window(s) of a tariff period."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:clock-time-four-outline"
 
     def __init__(self, runtime: PlanRuntime, entry: ConfigEntry, period: dict) -> None:
         self._period_name = period[CONF_PERIOD_NAME]
-        self._start_time = period[CONF_PERIOD_START_TIME]
-        self._end_time = period[CONF_PERIOD_END_TIME]
+        self._period = period
         super().__init__(
             runtime,
             entry,
@@ -440,11 +440,26 @@ class PeriodWindowSensor(_BaseTariffSensor):
 
     @property
     def native_value(self) -> str:
-        return f"{self._start_time} - {self._end_time}"
+        # A period may cover several disjoint windows, e.g.
+        # "15:00-16:00, 23:00-12:00".
+        return engine.format_period_windows(self._period)
 
     @property
-    def extra_state_attributes(self) -> dict[str, str]:
-        return {"start_time": self._start_time, "end_time": self._end_time}
+    def extra_state_attributes(self) -> dict[str, Any]:
+        windows = engine.period_windows(self._period)
+        return {
+            # start_time/end_time describe the first window only, kept for
+            # anything built against the single-window version of this
+            # sensor; `windows` is the full picture.
+            "start_time": self._period.get(CONF_PERIOD_START_TIME),
+            "end_time": self._period.get(CONF_PERIOD_END_TIME),
+            "windows": [
+                {"start_time": s.strftime("%H:%M:%S"), "end_time": e.strftime("%H:%M:%S")}
+                for s, e in windows
+            ],
+            "window_count": len(windows),
+            "total_hours": round(engine.period_total_hours(self._period), 2),
+        }
 
 
 class PeriodRateSensor(_BaseTariffSensor):
