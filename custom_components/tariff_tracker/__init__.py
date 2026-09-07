@@ -9,9 +9,9 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 
+from . import entity_ids
 from .const import (
-    CONF_PERIOD_BONUS,
-    CONF_PERIOD_NAME,
+    CONF_EXPORT_PERIODS,
     CONF_PERIODS,
     CONF_PLAN_NAME,
     DOMAIN,
@@ -19,17 +19,6 @@ from .const import (
 from .runtime import PlanRuntime
 
 PLATFORMS = ["sensor", "binary_sensor", "button"]
-
-# unique_id suffixes minted per import period in sensor.py / binary_sensor.py.
-# Kept here (rather than imported) since sensor.py/binary_sensor.py build these
-# ids inline - this list just has to stay in sync with them.
-_PERIOD_SENSOR_SUFFIXES = ("avg_watts_today", "energy_kwh_today", "window", "rate")
-_PERIOD_BONUS_SUFFIXES = (
-    "bonus_threshold",  # sensor.py
-    "bonus_active_window",  # binary_sensor.py
-    "bonus_earned_today",  # binary_sensor.py
-)
-_ALL_PERIOD_SUFFIXES = _PERIOD_SENSOR_SUFFIXES + _PERIOD_BONUS_SUFFIXES
 
 
 def _async_cleanup_orphaned_period_entities(
@@ -42,24 +31,21 @@ def _async_cleanup_orphaned_period_entities(
     that still exist - nothing tells the entity registry the old ones are
     gone, so they'd otherwise sit there forever as Unavailable.
     """
-    periods = entry.options.get(CONF_PERIODS, [])
-    valid_ids: set[str] = set()
-    for period in periods:
-        name = period[CONF_PERIOD_NAME]
-        for suffix in _PERIOD_SENSOR_SUFFIXES:
-            valid_ids.add(f"{entry.entry_id}_{name}_{suffix}")
-        if period.get(CONF_PERIOD_BONUS):
-            for suffix in _PERIOD_BONUS_SUFFIXES:
-                valid_ids.add(f"{entry.entry_id}_{name}_{suffix}")
+    valid_ids = entity_ids.period_unique_ids(
+        entry.entry_id,
+        entry.options.get(CONF_PERIODS, []),
+        entry.options.get(CONF_EXPORT_PERIODS, []),
+    )
 
     registry = er.async_get(hass)
     for entity_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
         unique_id = entity_entry.unique_id
-        is_period_entity = any(
-            unique_id.endswith(f"_{suffix}") for suffix in _ALL_PERIOD_SUFFIXES
-        )
-        if is_period_entity and unique_id not in valid_ids:
+        if (
+            entity_ids.is_period_unique_id(unique_id, entry.entry_id)
+            and unique_id not in valid_ids
+        ):
             registry.async_remove(entity_entry.entity_id)
+
 
 SERVICE_RESET_COSTS = "reset_costs"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"

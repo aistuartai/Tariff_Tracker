@@ -3,6 +3,35 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.12.1] - 2026-09-07
+
+### Fixed
+- Deleting a period left two of its entities behind in the entity registry
+  as permanently Unavailable. The orphan cleanup's list of per-period
+  unique-id suffixes was never updated when
+  `sensor.<period>_energy_this_billing_period` and
+  `sensor.<period>_energy_total` were added in 0.9.0, so those two were not
+  recognised as per-period entities at all while the period's other four
+  were removed correctly.
+- `sensor.<plan>_current_rate` and `sensor.<plan>_current_export_rate` were
+  removed from the entity registry and recreated on **every** reload. Both
+  end with `_rate`, which the orphan cleanup read as a period's rate sensor
+  belonging to a period that no longer exists. The damage was hidden
+  because Home Assistant restores a removed entity's id from its
+  deleted-entities record, so the entity came straight back with the same
+  entity_id - only `modified_at` moving on each reload gave it away.
+  Plan-level entities are now excluded explicitly.
+- Export period entities would have been deleted on every reload once the
+  missing suffixes above were added, since their ids end with the same
+  suffixes as import ones but carry an `export_` prefix the valid-id set
+  did not account for. Fixed together with the above rather than after.
+
+### Changed
+- Per-period unique-id bookkeeping moved to a new `entity_ids.py` with no
+  Home Assistant imports, so it is directly unit-testable. Covered by
+  `tests/test_entity_ids.py`, including a guard that the plan-level key
+  list still accounts for every key that collides with a period suffix.
+
 ## [0.12.0] - 2026-09-07
 
 ### Added
