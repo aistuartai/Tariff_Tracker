@@ -91,7 +91,7 @@ directory and restart Home Assistant.
 | `sensor.<plan>_billing_period_days_remaining` | Days left in the current cycle |
 | `binary_sensor.<period>_bonus_active_window` | On while that period's bonus window is active |
 | `binary_sensor.<period>_bonus_earned_today` | Result once the window closes for the day; `off` until then |
-| `sensor.<period>_avg_power_today` | Average import power (W) implied by that period's energy use so far |
+| `sensor.<period>_avg_power_today` | Average import power (W): that period's energy today over the hours its windows have been open today. Computed from the schedule, so a restart mid-window does not distort it |
 | `sensor.<period>_energy_today` | kWh used in that period today; resets at midnight (and self-corrects on restart if one lands right on that boundary), holding its value for the rest of the day once the window closes |
 | `sensor.<period>_window` *(diagnostic)* | The period's configured window(s), e.g. `15:00-16:00, 23:00-12:00`. Full list, count and total hours as attributes |
 | `sensor.<period>_rate` *(diagnostic)* | The period's configured $/kWh rate (full tier list as an attribute) |

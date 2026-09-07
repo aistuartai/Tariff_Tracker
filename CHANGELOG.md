@@ -3,6 +3,31 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.13.0] - 2026-09-07
+
+### Fixed
+- `sensor.<period>_avg_power_today` could read wildly high after a restart
+  or a config change mid-window - a real case showed 2773 W where the true
+  figure was 33 W. The denominator was the time the integration had
+  *observed* the window open, while the numerator is the period's energy
+  for the whole of today. Restart mid-window, or add a window to a period
+  part-way through the day, and the two no longer describe the same span.
+
+  Elapsed window time is now computed from the configured windows and the
+  clock, so both sides always cover the whole of today. It cannot be thrown
+  off by a restart, a missed start or end tick, or a config edit, and it
+  needs no persisted state.
+
+### Changed
+- Removes the `period_started_at`, `period_open_seconds_today` and
+  `period_avg_watts_today` runtime state along with their midnight resets,
+  their setup self-correction, and the per-window start-time listeners -
+  all of which existed only to measure observed open time. Stale keys in
+  existing storage files are simply ignored.
+- `sensor.<period>_avg_power_today` no longer freezes a snapshot when a
+  window closes; the computed value is naturally stable once every window
+  for the day has ended, and resumes rising when the next one opens.
+
 ## [0.12.1] - 2026-09-07
 
 ### Fixed

@@ -111,6 +111,42 @@ def format_period_windows(period: dict[str, Any]) -> str:
     )
 
 
+def _day_intervals(start: time, end: time) -> list[tuple[int, int]]:
+    """One window as second-of-day intervals, splitting an overnight wrap."""
+    start_s = start.hour * 3600 + start.minute * 60 + start.second
+    end_s = end.hour * 3600 + end.minute * 60 + end.second
+    if start_s < end_s:
+        return [(start_s, end_s)]
+    # Wraps midnight: the tail of the previous day plus the head of this one.
+    return [(start_s, 24 * 3600), (0, end_s)]
+
+
+def period_elapsed_hours_today(period: dict[str, Any], at: datetime) -> float:
+    """Hours since midnight, up to `at`, that this period was open for.
+
+    Computed from the configured windows and the clock, not from observing
+    them open and close. That matters because it is the denominator for
+    "average power today", whose numerator is the period's energy total for
+    the whole of today: measuring only the time Home Assistant happened to
+    be watching gives a denominator that does not match, and any restart
+    mid-window then inflates the average badly.
+
+    Caps at each window's end, so the figure stops growing once a window
+    closes and resumes when the next one opens.
+    """
+    if not period_applies_to_day(period, at.date()):
+        return 0.0
+
+    now_s = at.hour * 3600 + at.minute * 60 + at.second
+    seconds = 0
+    for start, end in period_windows(period):
+        for interval_start, interval_end in _day_intervals(start, end):
+            overlap = min(interval_end, now_s) - interval_start
+            if overlap > 0:
+                seconds += overlap
+    return seconds / 3600
+
+
 def period_contains_time(period: dict[str, Any], at: datetime) -> bool:
     """Return True if `at` falls inside any of the period's windows."""
     if not period_applies_to_day(period, at.date()):

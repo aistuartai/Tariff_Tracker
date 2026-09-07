@@ -101,14 +101,6 @@ class PlanRuntime:
     last_export_kwh: float | None = None
     export_tier_usage_today: dict[str, float] = field(default_factory=dict)
 
-    period_started_at: dict[str, datetime] = field(default_factory=dict)
-    # Seconds a period has been open so far today, summed across every window
-    # that has already closed. A period can have several disjoint windows, so
-    # "how long has this been open today" is not simply now-minus-start: with
-    # one start marker per window, the marker for window 2 would otherwise
-    # discard window 1's elapsed time and spike the average.
-    period_open_seconds_today: dict[str, float] = field(default_factory=dict)
-    period_avg_watts_today: dict[str, float] = field(default_factory=dict)
     # Independent running total of kWh used in each period today. Separate
     # from energy_by_period_today (which the avg-watts calc owns) so this
     # can't interfere with that calc; resets at midnight, not at the
@@ -175,33 +167,26 @@ class PlanRuntime:
         used_today = self.tier_usage_today.get(period[CONF_PERIOD_NAME], 0.0)
         return engine.tier_rate_for_usage(period[CONF_PERIOD_TIERS], used_today)
 
-    def period_open_hours_so_far(self, period_name: str, now: datetime) -> float:
-        """Hours this period has been open today, including the window that
-        is open right now, if any."""
-        seconds = self.period_open_seconds_today.get(period_name, 0.0)
-        started = self.period_started_at.get(period_name)
-        if started is not None:
-            seconds += max((now - started).total_seconds(), 0.0)
-        return seconds / 3600
-
     def current_period_avg_watts(self, period_name: str) -> float | None:
+        """Average import power today for one period.
+
+        Today's energy for the period over the hours its windows have been
+        open today. Both sides cover the whole of today, so the figure is
+        stable once a window closes and needs no frozen snapshot - and a
+        restart cannot distort it, because neither side depends on having
+        watched the window open.
+        """
         period = next(
             (p for p in self.periods if p[CONF_PERIOD_NAME] == period_name), None
         )
         if period is None:
             return None
-        now = dt_util.now()
-        if engine.period_contains_time(period, now):
-            elapsed_hours = self.period_open_hours_so_far(period_name, now)
-            if elapsed_hours <= 0:
-                return None
-            # period_energy_kwh_today is the day's full total for this period
-            # and survives each window closing, so a multi-window period
-            # averages across all of today's windows rather than restarting
-            # from zero when a later window opens.
-            energy = self.period_energy_kwh_today.get(period_name, 0.0)
-            return engine.avg_watts_from_energy(energy, elapsed_hours)
-        return self.period_avg_watts_today.get(period_name)
+        elapsed_hours = engine.period_elapsed_hours_today(period, dt_util.now())
+        if elapsed_hours <= 0:
+            return None
+        return engine.avg_watts_from_energy(
+            self.period_energy_kwh_today.get(period_name, 0.0), elapsed_hours
+        )
 
     def current_export_period(self) -> dict[str, Any] | None:
         return engine.find_active_period(self.export_periods, dt_util.now())
@@ -321,16 +306,7 @@ class PlanRuntime:
         # registers one marker/finalizer pair per window, not per period.
         for period in self.periods:
             name = period[CONF_PERIOD_NAME]
-            for start_time, end_time in engine.period_windows(period):
-                self.listeners.append(
-                    async_track_time_change(
-                        self.hass,
-                        self._make_period_start_marker(name),
-                        hour=start_time.hour,
-                        minute=start_time.minute,
-                        second=start_time.second,
-                    )
-                )
+            for _start_time, end_time in engine.period_windows(period):
                 self.listeners.append(
                     async_track_time_change(
                         self.hass,
@@ -340,17 +316,6 @@ class PlanRuntime:
                         second=end_time.second,
                     )
                 )
-
-        # A window that is already open at setup (a restart mid-window, or a
-        # window spanning midnight) never fires its start marker, so nothing
-        # would record when it opened and the average would have no
-        # denominator until the next window. Mark it as open from now.
-        for period in self.periods:
-            name = period[CONF_PERIOD_NAME]
-            if name not in self.period_started_at and engine.period_contains_time(
-                period, now
-            ):
-                self.period_started_at[name] = now
 
     def async_unload(self) -> None:
         if self._unsub_source:
@@ -382,15 +347,6 @@ class PlanRuntime:
         self.export_credit_today = saved.get("export_credit_today", 0.0)
         self.export_credit_month = saved.get("export_credit_month", 0.0)
         self.export_credit_billing_period = saved.get("export_credit_billing_period", 0.0)
-        self.period_avg_watts_today = saved.get("period_avg_watts_today", {})
-        self.period_open_seconds_today = saved.get("period_open_seconds_today", {})
-        # Persisted so a restart mid-window keeps the real window-open time
-        # as the average's denominator, instead of restarting the clock and
-        # over-stating average power for the rest of that window.
-        self.period_started_at = {
-            name: datetime.fromisoformat(value)
-            for name, value in (saved.get("period_started_at") or {}).items()
-        }
         self.period_energy_kwh_today = saved.get("period_energy_kwh_today", {})
         self.period_energy_kwh_billing_period = saved.get(
             "period_energy_kwh_billing_period", {}
@@ -440,12 +396,6 @@ class PlanRuntime:
                 "export_credit_today": self.export_credit_today,
                 "export_credit_month": self.export_credit_month,
                 "export_credit_billing_period": self.export_credit_billing_period,
-                "period_avg_watts_today": self.period_avg_watts_today,
-                "period_open_seconds_today": self.period_open_seconds_today,
-                "period_started_at": {
-                    name: value.isoformat()
-                    for name, value in self.period_started_at.items()
-                },
                 "period_energy_kwh_today": self.period_energy_kwh_today,
                 "period_energy_kwh_billing_period": self.period_energy_kwh_billing_period,
                 "export_period_energy_kwh_billing_period": self.export_period_energy_kwh_billing_period,
@@ -494,8 +444,6 @@ class PlanRuntime:
             self.export_period_energy_kwh_billing_period = {}
         if reset_power_tracking:
             self.energy_by_period_today = {}
-            self.period_avg_watts_today = {}
-            self.period_open_seconds_today = {}
             self.period_energy_kwh_today = {}
             for sample in self.bonus_samples.values():
                 sample.reset()
@@ -556,23 +504,6 @@ class PlanRuntime:
             self.period_energy_kwh_billing_period = {}
             self.export_period_energy_kwh_billing_period = {}
 
-    def _reset_period_open_clocks(self, now: datetime) -> None:
-        """Restart the per-period "open time today" clocks for a new day.
-
-        Today's open time starts at midnight, so the accumulated seconds go
-        back to zero. A window that spans midnight is still open, and its
-        contribution to *today* runs from midnight rather than from when it
-        opened yesterday - so it is re-marked as starting now instead of
-        being dropped, which would leave the average without a denominator
-        until the window closed.
-        """
-        self.period_open_seconds_today = {}
-        self.period_started_at = {
-            period[CONF_PERIOD_NAME]: now
-            for period in self.periods
-            if engine.period_contains_time(period, now)
-        }
-
     def _recompute_month_bounds(self, today: date) -> None:
         """Self-correct cost_month/export_credit_month on setup if the last
         known day is in a different calendar month than now.
@@ -617,15 +548,6 @@ class PlanRuntime:
             )
         }
         self.bonus_earned_today = {}
-        self.period_avg_watts_today = {
-            name: val
-            for name, val in self.period_avg_watts_today.items()
-            if any(
-                p[CONF_PERIOD_NAME] == name and engine.period_contains_time(p, now)
-                for p in self.periods
-            )
-        }
-        self._reset_period_open_clocks(now)
         self.export_tier_usage_today = {}
         self.export_credit_today = 0.0
         self.cost_today = self.daily_charge
@@ -900,13 +822,6 @@ class PlanRuntime:
 
     # ---- per-period average import power -------------------------------
 
-    def _make_period_start_marker(self, period_name: str) -> Callable[[datetime], None]:
-        @callback
-        def _mark(now: datetime) -> None:
-            self.period_started_at[period_name] = now
-
-        return _mark
-
     def _make_period_avg_finalizer(self, period_name: str) -> Callable[[datetime], None]:
         @callback
         def _finalize(now: datetime) -> None:
@@ -916,28 +831,11 @@ class PlanRuntime:
             if period is None:
                 return
 
-            # Bank the window that just closed, then average over every
-            # window this period has been open for today. A period split
-            # into several windows must not restart its denominator each
-            # time one closes.
-            started = self.period_started_at.pop(period_name, None)
-            if started is not None:
-                self.period_open_seconds_today[period_name] = (
-                    self.period_open_seconds_today.get(period_name, 0.0)
-                    + max((now - started).total_seconds(), 0.0)
-                )
-
-            elapsed_hours = self.period_open_seconds_today.get(period_name, 0.0) / 3600
-            if elapsed_hours <= 0:
-                # No start marker was ever seen today (Home Assistant was
-                # down when the window opened). Fall back to the window's
-                # configured length so the average is still roughly right.
-                elapsed_hours = engine.period_total_hours(period)
-
-            energy = self.period_energy_kwh_today.get(period_name, 0.0)
-            self.period_avg_watts_today[period_name] = engine.avg_watts_from_energy(
-                energy, elapsed_hours
-            )
+            # Average power itself is computed on demand from the configured
+            # windows and the clock (see current_period_avg_watts), so there
+            # is nothing to snapshot here - the figure is already stable now
+            # that the window has closed. This callback survives only to
+            # clear the bonus numerator below and to push a state update.
 
             # period_energy_kwh_today is NOT touched here - it resets at
             # midnight (see _handle_midnight), not at the period's own end
@@ -982,15 +880,6 @@ class PlanRuntime:
             )
         }
         self.bonus_earned_today = {}
-        self.period_avg_watts_today = {
-            name: val
-            for name, val in self.period_avg_watts_today.items()
-            if any(
-                p[CONF_PERIOD_NAME] == name and engine.period_contains_time(p, now)
-                for p in self.periods
-            )
-        }
-        self._reset_period_open_clocks(now)
         self.export_tier_usage_today = {}
         self.export_credit_today = 0.0
 

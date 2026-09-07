@@ -120,3 +120,66 @@ def test_tiering_is_shared_across_a_period_s_windows():
     # straddles the boundary regardless of which window it happens in.
     cost = engine.cost_of_delta(tiered, 8.0, 4.0)
     assert cost == 2.0 * 0.0 + 2.0 * 0.33
+
+
+def test_elapsed_hours_today_caps_at_the_window_end():
+    # Window 1 is 15:00-16:00, window 2 (23:00-12:00) contributes 00:00-12:00
+    # of today. At 13:00 the second window's share is capped at 12h and the
+    # first has not opened, so the figure has stopped growing.
+    at_1300 = engine.period_elapsed_hours_today(
+        SHOULDER_SPLIT, datetime(2026, 9, 7, 13, 0)
+    )
+    assert at_1300 == 12.0
+    # Still 12h at 14:59, then it grows again while window 1 is open.
+    assert engine.period_elapsed_hours_today(
+        SHOULDER_SPLIT, datetime(2026, 9, 7, 14, 59)
+    ) == 12.0
+    assert engine.period_elapsed_hours_today(
+        SHOULDER_SPLIT, datetime(2026, 9, 7, 15, 30)
+    ) == 12.5
+    assert engine.period_elapsed_hours_today(
+        SHOULDER_SPLIT, datetime(2026, 9, 7, 16, 0)
+    ) == 13.0
+
+
+def test_elapsed_hours_today_mid_window():
+    # 06:00: only the overnight window's 00:00-06:00 has elapsed.
+    assert engine.period_elapsed_hours_today(
+        SHOULDER_SPLIT, datetime(2026, 9, 7, 6, 0)
+    ) == 6.0
+
+
+def test_elapsed_hours_today_counts_the_evening_tail():
+    # 23:30 - the full 12h head of day plus 1h window plus 30min of tonight's
+    # tail of the overnight window.
+    assert engine.period_elapsed_hours_today(
+        SHOULDER_SPLIT, datetime(2026, 9, 7, 23, 30)
+    ) == 13.5
+
+
+def test_elapsed_hours_today_is_zero_before_any_window():
+    # Peak starts at 16:00, so nothing has elapsed at 09:00.
+    assert engine.period_elapsed_hours_today(
+        LEGACY_SINGLE, datetime(2026, 9, 7, 9, 0)
+    ) == 0.0
+
+
+def test_elapsed_hours_today_respects_the_day_filter():
+    weekends_only = dict(SHOULDER_SPLIT, days="weekends")
+    # Monday.
+    assert engine.period_elapsed_hours_today(
+        weekends_only, datetime(2026, 9, 7, 13, 0)
+    ) == 0.0
+    # Saturday.
+    assert engine.period_elapsed_hours_today(
+        weekends_only, datetime(2026, 9, 5, 13, 0)
+    ) == 12.0
+
+
+def test_elapsed_hours_never_exceeds_total_hours():
+    # End of day: every window has fully elapsed, so the two agree.
+    end_of_day = datetime(2026, 9, 7, 23, 59, 59)
+    for period in (SHOULDER_SPLIT, LEGACY_SINGLE):
+        assert engine.period_elapsed_hours_today(
+            period, end_of_day
+        ) <= engine.period_total_hours(period) + 0.001
