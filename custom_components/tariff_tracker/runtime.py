@@ -663,7 +663,12 @@ class PlanRuntime:
 
         now = dt_util.now()
         if self.last_energy_kwh is None:
+            # First reading since the baseline went missing (fresh plan, or
+            # a source swap). Persist it right away: an unsaved baseline is
+            # lost on the next restart, which re-opens the accounting hole
+            # this seeding exists to close.
             self.last_energy_kwh = new_kwh
+            self.hass.async_create_task(self._async_save())
             self._notify()
             return
 
@@ -718,7 +723,9 @@ class PlanRuntime:
 
         now = dt_util.now()
         if self.last_export_kwh is None:
+            # Persist the seed immediately; see _handle_energy_event.
             self.last_export_kwh = new_kwh
+            self.hass.async_create_task(self._async_save())
             self._notify()
             return
 

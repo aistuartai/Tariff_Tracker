@@ -17,6 +17,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   so clearing an optional field falls back to it.
 
 ### Fixed
+- A baseline seeded by a state event was never written to the store, so
+  the next restart lost it and seeded again from a later reading -
+  dropping everything imported in between, every restart. Only visible
+  while a baseline was missing (a fresh plan, or a source change), which
+  is why it survived this long. Seeding now saves immediately.
 - Baselines are seeded from the source sensor's current state at setup
   rather than waiting for its next state change. A meter that reports
   every half hour left a half-hour hole in the accounting after a source
