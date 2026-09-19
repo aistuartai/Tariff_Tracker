@@ -272,6 +272,8 @@ class PlanRuntime:
         export_sensor = self.options.get(CONF_EXPORT_ENERGY_SENSOR)
         if self._rebase_for_source_change(energy_sensor, export_sensor):
             await self._async_save()
+        if self._seed_missing_baselines(energy_sensor, export_sensor):
+            await self._async_save()
 
         self._unsub_source = async_track_state_change_event(
             self.hass, [energy_sensor], self._handle_energy_event
@@ -372,6 +374,43 @@ class PlanRuntime:
             self.last_export_kwh = None
         self.last_export_source = export_source
         return changed
+
+    def _seed_missing_baselines(
+        self, energy_sensor: str, export_sensor: str | None
+    ) -> bool:
+        """Take a baseline from the source sensors' current state.
+
+        Only fills a baseline that is missing - a first run, or one just
+        discarded because the source sensor changed. Without this the
+        baseline waits for the sensor's next state change, and everything
+        imported in between is dropped. On a meter that reports twice an
+        hour that is a half-hour hole, opened again by every restart that
+        lands on a missing baseline.
+
+        A sensor that is absent, unavailable or non-numeric at setup seeds
+        nothing and is left to the state listener, which is the behaviour
+        this replaces. Seeding never applies a delta, so it cannot move a
+        cost or a counter.
+
+        Returns True if anything was seeded and the store needs rewriting.
+        """
+        seeded = False
+
+        if self.last_energy_kwh is None:
+            state = self.hass.states.get(energy_sensor)
+            reading = engine.coerce_meter_reading(state.state if state else None)
+            if reading is not None:
+                self.last_energy_kwh = reading
+                seeded = True
+
+        if export_sensor and self.last_export_kwh is None:
+            state = self.hass.states.get(export_sensor)
+            reading = engine.coerce_meter_reading(state.state if state else None)
+            if reading is not None:
+                self.last_export_kwh = reading
+                seeded = True
+
+        return seeded
 
     # ---- persistence -----------------------------------------------------
 

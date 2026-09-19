@@ -17,6 +17,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   so clearing an optional field falls back to it.
 
 ### Fixed
+- Baselines are seeded from the source sensor's current state at setup
+  rather than waiting for its next state change. A meter that reports
+  every half hour left a half-hour hole in the accounting after a source
+  change or a first run, reopened by any restart that landed on a missing
+  baseline. Seeding never applies a delta, so it cannot move a cost or a
+  counter, and a baseline that already exists is left alone - restarts
+  still count usage that happened while Home Assistant was down. A source
+  that is absent, unavailable, non-numeric or negative at setup seeds
+  nothing and falls back to the state listener as before.
 - Changing a source sensor no longer books a phantom delta. Baselines
   (`last_energy_kwh`, `last_export_kwh`) are now stored with the entity id
   they were read from; when that id no longer matches the configured

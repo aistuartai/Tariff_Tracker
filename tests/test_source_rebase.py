@@ -59,3 +59,19 @@ def test_no_export_sensor_before_or_after_is_not_a_change():
         IMPORT_A, None, IMPORT_A, None
     )
     assert (clear_out, src_out, changed) == (False, None, False)
+
+
+def test_meter_reading_accepts_plain_numbers():
+    assert engine.coerce_meter_reading("2961.05") == 2961.05
+    assert engine.coerce_meter_reading("0") == 0.0
+
+
+def test_meter_reading_rejects_non_readings():
+    # Seeding a baseline from any of these, then differencing the next real
+    # reading against it, would book a meter's whole total as usage.
+    for state in (None, "unknown", "unavailable", "", "on", "1,234"):
+        assert engine.coerce_meter_reading(state) is None
+
+
+def test_meter_reading_rejects_negatives():
+    assert engine.coerce_meter_reading("-1.5") is None

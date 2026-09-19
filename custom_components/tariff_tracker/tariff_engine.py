@@ -318,3 +318,24 @@ def resolve_baseline_sources(
     clear_export = stored_export is not None and stored_export != export_sensor
     changed = changed or clear_export or stored_export is None
     return clear_import, import_sensor, clear_export, export_sensor, changed
+
+
+def coerce_meter_reading(state: str | None) -> float | None:
+    """A cumulative meter reading from a state string, or None if it isn't one.
+
+    Covers the states a source sensor can legitimately be in and must not be
+    differenced against: absent entity, `unknown`/`unavailable` while its
+    device is offline, and anything non-numeric. A negative reading is
+    rejected too - a cumulative meter never runs below zero, so a negative
+    is bad data, and seeding a baseline from it would turn the next good
+    reading into one enormous delta.
+    """
+    if state is None or state in ("unknown", "unavailable", ""):
+        return None
+    try:
+        value = float(state)
+    except (TypeError, ValueError):
+        return None
+    if value < 0:
+        return None
+    return value
