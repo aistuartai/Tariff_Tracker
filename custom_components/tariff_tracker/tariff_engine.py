@@ -281,3 +281,40 @@ def avg_watts_from_energy(kwh_over_window: float, window_hours: float) -> float:
     if window_hours <= 0:
         return 0.0
     return (kwh_over_window / window_hours) * 1000
+
+
+def resolve_baseline_sources(
+    stored_import: str | None,
+    stored_export: str | None,
+    import_sensor: str,
+    export_sensor: str | None,
+) -> tuple[bool, str, bool, str | None, bool]:
+    """Decide which meter baselines survive the configured sensors.
+
+    A baseline (the last cumulative kWh read) only means something next to
+    the meter it came from. Repoint a plan at a different sensor and the
+    stored number belongs to another meter entirely: differencing against
+    it books the gap between two unrelated lifetime totals as one delta,
+    or - when the new meter reads lower - looks like a meter reset and
+    books the new meter's whole total as usage.
+
+    `stored_import`/`stored_export` are the entity ids the saved baselines
+    were read from, `None` for state written before those were recorded.
+    Legacy state is assumed to belong to the currently configured sensor,
+    so an upgrade doesn't throw away a baseline that is in fact valid.
+
+    Returns (clear_import, import_source, clear_export, export_source,
+    changed), where `changed` says whether any of it differs from what was
+    stored and the state therefore needs saving.
+    """
+    clear_import = stored_import is not None and stored_import != import_sensor
+    changed = clear_import or stored_import is None
+
+    if export_sensor is None:
+        clear_export = stored_export is not None
+        changed = changed or clear_export
+        return clear_import, import_sensor, clear_export, None, changed
+
+    clear_export = stored_export is not None and stored_export != export_sensor
+    changed = changed or clear_export or stored_export is None
+    return clear_import, import_sensor, clear_export, export_sensor, changed

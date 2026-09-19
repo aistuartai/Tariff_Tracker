@@ -3,6 +3,33 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.14.0] - 2026-09-20
+
+### Added
+- Options flow gains a **Source sensors** step: the import energy sensor,
+  import power sensor and export energy sensor can now be changed after
+  setup, from the same UI as periods and billing cycle. Previously they
+  were config-flow-only, so repointing a plan at a better meter meant
+  deleting and re-adding the entry, losing every period, tier and counter.
+
+  The sensors are written to options, which setup merges over the original
+  config-flow values in `entry.data` - the original choice is left intact,
+  so clearing an optional field falls back to it.
+
+### Fixed
+- Changing a source sensor no longer books a phantom delta. Baselines
+  (`last_energy_kwh`, `last_export_kwh`) are now stored with the entity id
+  they were read from; when that id no longer matches the configured
+  sensor, the baseline is discarded and re-seeded from the new sensor's
+  next update. Without this, swapping meters would difference two
+  unrelated lifetime totals into a single delta - or, if the new meter
+  read lower, hit the meter-reset branch and book its entire cumulative
+  total as one day's usage.
+
+  State saved by earlier versions has no recorded source id and is treated
+  as belonging to the currently configured sensor, so upgrading doesn't
+  discard a valid baseline.
+
 ## [0.13.0] - 2026-09-07
 
 ### Fixed

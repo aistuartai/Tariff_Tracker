@@ -18,11 +18,21 @@
     "step": {
       "init": {
         "menu_options": {
+          "source_sensors": "Source sensors",
           "plan_settings": "Plan settings (daily charge)",
           "billing_cycle": "Billing cycle",
           "periods_menu": "Import (time-of-use) periods",
           "export_periods_menu": "Export (feed-in) periods",
           "finish": "Save and close"
+        }
+      },
+      "source_sensors": {
+        "title": "Source sensors",
+        "description": "Which entities this plan reads. Changing the import or export sensor restarts that meter's baseline - today's totals keep their value, but usage between the switch and the new sensor's next update isn't counted.",
+        "data": {
+          "import_energy_sensor": "Import energy sensor (cumulative kWh)",
+          "import_power_sensor": "Import power sensor (W, used for bonus thresholds)",
+          "export_energy_sensor": "Export energy sensor (cumulative kWh)"
         }
       },
       "plan_settings": {

@@ -87,6 +87,14 @@ class PlanRuntime:
     options: dict[str, Any]
 
     last_energy_kwh: float | None = None
+    # Entity id the import baseline above was read from. Swapping the source
+    # sensor (options flow) leaves a baseline belonging to a different meter:
+    # differencing against it would book the gap between the two meters'
+    # lifetime totals as one giant delta, or - if the new meter reads lower -
+    # trip the meter-reset branch and book its entire cumulative total as
+    # usage. Storing the origin lets restore drop a stale baseline and
+    # re-seed from the new sensor's first reading instead.
+    last_energy_source: str | None = None
     tier_usage_today: dict[str, float] = field(default_factory=dict)
     energy_by_period_today: dict[str, float] = field(default_factory=dict)
     bonus_earned_today: dict[str, bool | None] = field(default_factory=dict)
@@ -99,6 +107,8 @@ class PlanRuntime:
     bonus_finalized_for: dict[str, str] = field(default_factory=dict)
 
     last_export_kwh: float | None = None
+    # Same guard as last_energy_source, for the export baseline.
+    last_export_source: str | None = None
     export_tier_usage_today: dict[str, float] = field(default_factory=dict)
 
     # Independent running total of kWh used in each period today. Separate
@@ -259,6 +269,10 @@ class PlanRuntime:
             await self._async_save()
 
         energy_sensor = self.options[CONF_IMPORT_ENERGY_SENSOR]
+        export_sensor = self.options.get(CONF_EXPORT_ENERGY_SENSOR)
+        if self._rebase_for_source_change(energy_sensor, export_sensor):
+            await self._async_save()
+
         self._unsub_source = async_track_state_change_event(
             self.hass, [energy_sensor], self._handle_energy_event
         )
@@ -269,7 +283,6 @@ class PlanRuntime:
                 self.hass, [power_sensor], self._handle_power_event
             )
 
-        export_sensor = self.options.get(CONF_EXPORT_ENERGY_SENSOR)
         if export_sensor:
             self._unsub_export = async_track_state_change_event(
                 self.hass, [export_sensor], self._handle_export_energy_event
@@ -327,10 +340,44 @@ class PlanRuntime:
         for unsub in self.listeners:
             unsub()
 
+    def _rebase_for_source_change(
+        self, energy_sensor: str, export_sensor: str | None
+    ) -> bool:
+        """Drop any baseline that belongs to a sensor we no longer read.
+
+        Repointing the plan at a different source sensor leaves a baseline
+        from another meter; see engine.resolve_baseline_sources for why
+        that has to be discarded rather than differenced against. Clearing
+        it costs only the usage between the switch and that sensor's next
+        update, which re-seeds the baseline.
+
+        Returns True if anything changed and the store needs rewriting.
+        """
+        (
+            clear_import,
+            import_source,
+            clear_export,
+            export_source,
+            changed,
+        ) = engine.resolve_baseline_sources(
+            self.last_energy_source,
+            self.last_export_source,
+            energy_sensor,
+            export_sensor,
+        )
+        if clear_import:
+            self.last_energy_kwh = None
+        self.last_energy_source = import_source
+        if clear_export or export_source is None:
+            self.last_export_kwh = None
+        self.last_export_source = export_source
+        return changed
+
     # ---- persistence -----------------------------------------------------
 
     def _restore(self, saved: dict[str, Any]) -> None:
         self.last_energy_kwh = saved.get("last_energy_kwh")
+        self.last_energy_source = saved.get("last_energy_source")
         self.tier_usage_today = saved.get("tier_usage_today", {})
         self.energy_by_period_today = saved.get("energy_by_period_today", {})
         self.bonus_earned_today = saved.get("bonus_earned_today", {})
@@ -343,6 +390,7 @@ class PlanRuntime:
             "bonus_days_earned_billing_period", 0
         )
         self.last_export_kwh = saved.get("last_export_kwh")
+        self.last_export_source = saved.get("last_export_source")
         self.export_tier_usage_today = saved.get("export_tier_usage_today", {})
         self.export_credit_today = saved.get("export_credit_today", 0.0)
         self.export_credit_month = saved.get("export_credit_month", 0.0)
@@ -382,6 +430,7 @@ class PlanRuntime:
         await self._store.async_save(
             {
                 "last_energy_kwh": self.last_energy_kwh,
+                "last_energy_source": self.last_energy_source,
                 "tier_usage_today": self.tier_usage_today,
                 "energy_by_period_today": self.energy_by_period_today,
                 "bonus_earned_today": self.bonus_earned_today,
@@ -392,6 +441,7 @@ class PlanRuntime:
                 "bonus_savings_billing_period": self.bonus_savings_billing_period,
                 "bonus_days_earned_billing_period": self.bonus_days_earned_billing_period,
                 "last_export_kwh": self.last_export_kwh,
+                "last_export_source": self.last_export_source,
                 "export_tier_usage_today": self.export_tier_usage_today,
                 "export_credit_today": self.export_credit_today,
                 "export_credit_month": self.export_credit_month,

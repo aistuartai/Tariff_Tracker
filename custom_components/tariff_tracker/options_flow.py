@@ -23,7 +23,10 @@ from .const import (
     CONF_BONUS_START_TIME,
     CONF_BONUS_THRESHOLD_W,
     CONF_DAILY_CHARGE,
+    CONF_EXPORT_ENERGY_SENSOR,
     CONF_EXPORT_PERIODS,
+    CONF_IMPORT_ENERGY_SENSOR,
+    CONF_IMPORT_POWER_SENSOR,
     CONF_PERIOD_BONUS,
     CONF_PERIOD_DAYS,
     CONF_PERIOD_END_TIME,
@@ -125,12 +128,73 @@ class TariffTrackerOptionsFlow(OptionsFlow):
         return self.async_show_menu(
             step_id="init",
             menu_options=[
+                "source_sensors",
                 "plan_settings",
                 "billing_cycle",
                 "periods_menu",
                 "export_periods_menu",
                 "finish",
             ],
+        )
+
+    # ---- Source sensors --------------------------------------------------
+
+    async def async_step_source_sensors(
+        self, user_input: dict[str, Any] | None = None
+    ) -> Any:
+        """Repoint the plan at different source sensors.
+
+        The sensors were originally set in the config flow and live in
+        entry.data. Setup merges options over data, so writing them here
+        overrides the original choice without touching it - clearing the
+        option (leaving an optional field blank) falls back to whatever
+        the config flow recorded. Changing the import or export sensor
+        invalidates the matching baseline; PlanRuntime handles that on the
+        reload this flow triggers.
+        """
+        if user_input is not None:
+            self._options[CONF_IMPORT_ENERGY_SENSOR] = user_input[
+                CONF_IMPORT_ENERGY_SENSOR
+            ]
+            for key in (CONF_IMPORT_POWER_SENSOR, CONF_EXPORT_ENERGY_SENSOR):
+                value = user_input.get(key)
+                if value:
+                    self._options[key] = value
+                else:
+                    self._options.pop(key, None)
+            return await self.async_step_init()
+
+        def current(key: str) -> Any:
+            return self._options.get(key, self._entry.data.get(key))
+
+        schema_fields: dict[Any, Any] = {
+            vol.Required(
+                CONF_IMPORT_ENERGY_SENSOR,
+                default=current(CONF_IMPORT_ENERGY_SENSOR),
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor", device_class="energy")
+            )
+        }
+        for key, device_class in (
+            (CONF_IMPORT_POWER_SENSOR, "power"),
+            (CONF_EXPORT_ENERGY_SENSOR, "energy"),
+        ):
+            existing = current(key)
+            # An Optional with default=None crashes the selector, so only
+            # carry a default when there is one to carry.
+            marker = (
+                vol.Optional(key, default=existing)
+                if existing
+                else vol.Optional(key)
+            )
+            schema_fields[marker] = selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain="sensor", device_class=device_class
+                )
+            )
+
+        return self.async_show_form(
+            step_id="source_sensors", data_schema=vol.Schema(schema_fields)
         )
 
     # ---- Plan settings (daily charge) -----------------------------------
