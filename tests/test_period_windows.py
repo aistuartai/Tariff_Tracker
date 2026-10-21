@@ -118,7 +118,7 @@ def test_tiering_is_shared_across_a_period_s_windows():
     )
     # 8 kWh already used in window 1 leaves 2 kWh free; the next 4 kWh
     # straddles the boundary regardless of which window it happens in.
-    cost = engine.cost_of_delta(tiered, 8.0, 4.0)
+    cost = engine.cost_of_delta(tiered["tiers"], 8.0, 4.0)
     assert cost == 2.0 * 0.0 + 2.0 * 0.33
 
 

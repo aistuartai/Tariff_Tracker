@@ -54,12 +54,12 @@ def test_cost_of_delta_splits_across_tier_boundary():
     tiers = OFF_PEAK["tiers"]
     # Already used 48 kWh today at the free tier; import 4 more kWh, so
     # 2 kWh finish the free tier and 2 kWh land in the 0.275 balance tier.
-    cost = engine.cost_of_delta(OFF_PEAK, kwh_already_used_in_period_today=48, delta_kwh=4)
+    cost = engine.cost_of_delta(OFF_PEAK["tiers"], already_used=48, delta=4)
     assert round(cost, 4) == round(2 * 0.275, 4)
 
 
 def test_cost_of_delta_flat_rate_period():
-    cost = engine.cost_of_delta(PEAK_WEEKDAYS, kwh_already_used_in_period_today=0, delta_kwh=2)
+    cost = engine.cost_of_delta(PEAK_WEEKDAYS["tiers"], already_used=0, delta=2)
     assert round(cost, 4) == round(2 * 0.44, 4)
 
 
@@ -109,5 +109,5 @@ def test_export_tier_rate_drops_after_first_tier():
 def test_export_cost_of_delta_splits_across_tier_boundary():
     # 3 kWh already exported today; export 4 more, so 2 kWh finish the
     # premium first tier and 2 kWh land in the lower balance tier.
-    credit = engine.cost_of_delta(SOLAR_FEED_IN, kwh_already_used_in_period_today=3, delta_kwh=4)
+    credit = engine.cost_of_delta(SOLAR_FEED_IN["tiers"], already_used=3, delta=4)
     assert round(credit, 4) == round(2 * 0.10 + 2 * 0.05, 4)

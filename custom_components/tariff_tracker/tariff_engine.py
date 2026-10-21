@@ -15,12 +15,14 @@ try:
         CONF_PERIOD_END_TIME,
         CONF_PERIOD_NAME,
         CONF_PERIOD_START_TIME,
+        CONF_PERIOD_TIER_RESET,
         CONF_PERIOD_TIERS,
         CONF_PERIOD_WINDOWS,
         CONF_TIER_LIMIT_KWH,
         CONF_TIER_RATE,
         DAYS_WEEKDAYS,
         DAYS_WEEKENDS,
+        TIER_RESET_BILLING_PERIOD,
     )
 except ImportError:  # imported standalone (e.g. from tests) without the package
     from const import (
@@ -29,12 +31,14 @@ except ImportError:  # imported standalone (e.g. from tests) without the package
         CONF_PERIOD_END_TIME,
         CONF_PERIOD_NAME,
         CONF_PERIOD_START_TIME,
+        CONF_PERIOD_TIER_RESET,
         CONF_PERIOD_TIERS,
         CONF_PERIOD_WINDOWS,
         CONF_TIER_LIMIT_KWH,
         CONF_TIER_RATE,
         DAYS_WEEKDAYS,
         DAYS_WEEKENDS,
+        TIER_RESET_BILLING_PERIOD,
     )
 
 
@@ -193,14 +197,14 @@ def find_active_period(
 
 
 def tier_rate_for_usage(
-    tiers: list[dict[str, Any]], kwh_already_used_in_period_today: float
+    tiers: list[dict[str, Any]], already_used: float
 ) -> float:
-    """Return the $/kWh rate that applies for the next unit of usage.
+    """Return the per-unit rate that applies for the next unit of usage.
 
     `tiers` is an ordered list of {limit_kwh, rate}. A tier with
-    limit_kwh=None is the final/unbounded tier. `kwh_already_used_in_period_today`
-    is how much has already been consumed under this period *today* (tiers
-    reset daily, matching typical retailer "first N kWh/day" wording).
+    limit_kwh=None is the final/unbounded tier. `already_used` is how much
+    has been consumed under this period since its tiers last reset - today,
+    or the billing period so far; see tier_view.
     """
     cumulative = 0.0
     for tier in tiers:
@@ -208,7 +212,7 @@ def tier_rate_for_usage(
         rate = tier[CONF_TIER_RATE]
         if limit is None:
             return rate
-        if kwh_already_used_in_period_today < cumulative + limit:
+        if already_used < cumulative + limit:
             return rate
         cumulative += limit
     # Fell through: usage exceeds all bounded tiers and there was no
@@ -217,18 +221,17 @@ def tier_rate_for_usage(
 
 
 def cost_of_delta(
-    period: dict[str, Any], kwh_already_used_in_period_today: float, delta_kwh: float
+    tiers: list[dict[str, Any]], already_used: float, delta: float
 ) -> float:
-    """Cost in dollars of importing `delta_kwh` more, given today's tier usage so far.
+    """Cost in dollars of importing `delta` more, given tier usage so far.
 
     Splits the delta across a tier boundary if it straddles one.
     """
-    tiers = period.get(CONF_PERIOD_TIERS, [])
-    if not tiers or delta_kwh <= 0:
+    if not tiers or delta <= 0:
         return 0.0
 
-    remaining = delta_kwh
-    used = kwh_already_used_in_period_today
+    remaining = delta
+    used = already_used
     total_cost = 0.0
     cumulative = 0.0
 
@@ -254,6 +257,41 @@ def cost_of_delta(
     return total_cost
 
 
+def tier_view(
+    period: dict[str, Any],
+    used_today: float,
+    used_billing_period: float,
+    billing_days: int | None,
+) -> tuple[list[dict[str, Any]], float]:
+    """The tiers a period is billed against right now, and usage counted toward them.
+
+    Daily reset (the default) pairs the configured limits with today's usage.
+    Billing-period reset pools the allowance: each limit is a per-day figure
+    multiplied by the billing period's length, measured against everything
+    used under this period since the billing period began. A day over the
+    daily limit then still bills at the first-tier rate while quieter days
+    have left allowance unspent, as retailers using this rule bill it.
+
+    Without known billing-period bounds there is no length to scale by, so
+    it falls back to the daily view rather than guessing.
+    """
+    tiers = period.get(CONF_PERIOD_TIERS, [])
+    if period.get(CONF_PERIOD_TIER_RESET) != TIER_RESET_BILLING_PERIOD or not billing_days:
+        return tiers, used_today
+    scaled = [
+        {
+            **tier,
+            CONF_TIER_LIMIT_KWH: (
+                tier[CONF_TIER_LIMIT_KWH] * billing_days
+                if tier.get(CONF_TIER_LIMIT_KWH) is not None
+                else None
+            ),
+        }
+        for tier in tiers
+    ]
+    return scaled, used_billing_period
+
+
 def billing_period_bounds(
     cycle_type: str, cycle_days: int | None, cycle_start: date | None, today: date
 ) -> tuple[date, date]:
@@ -274,6 +312,56 @@ def billing_period_bounds(
     else:
         end = start.replace(month=start.month + 1)
     return start, end
+
+
+# kWh in one of each unit Home Assistant accepts for an energy sensor.
+_KWH_PER_UNIT = {
+    "mWh": 1e-6,
+    "Wh": 1e-3,
+    "kWh": 1.0,
+    "MWh": 1e3,
+    "GWh": 1e6,
+    "TWh": 1e9,
+    "J": 1 / 3.6e6,
+    "kJ": 1 / 3600,
+    "MJ": 1 / 3.6,
+    "GJ": 1000 / 3.6,
+    "cal": 4.184 / 3.6e6,
+    "kcal": 4.184 / 3600,
+    "Mcal": 4.184 / 3.6,
+    "Gcal": 4184 / 3.6,
+}
+_ELECTRICAL_UNITS = {"mWh", "Wh", "kWh", "MWh", "GWh", "TWh"}
+
+PLAN_UNIT_DEFAULT = "kWh"
+
+
+def plan_energy_unit(source_unit: str | None) -> tuple[str, float]:
+    """The unit a plan is billed in, and the factor from the source's unit to it.
+
+    Rates and tier limits are entered in the plan's unit, and every energy
+    total the plan reports is in it, so the plan's unit is whatever the
+    retailer quotes prices in. Electricity is quoted per kWh, so a Wh or MWh
+    source is converted - differencing raw Wh against a $/kWh rate would bill
+    a thousand times over. Anything else (MJ or GJ for gas) is quoted in the
+    meter's own unit and passed through untouched.
+
+    An unknown or missing unit is assumed to be kWh, which is what every
+    plan before unit support assumed.
+    """
+    if not source_unit or source_unit in _ELECTRICAL_UNITS:
+        factor = _KWH_PER_UNIT.get(source_unit, 1.0) if source_unit else 1.0
+        return PLAN_UNIT_DEFAULT, factor
+    return source_unit, 1.0
+
+
+def kwh_per_plan_unit(plan_unit: str) -> float | None:
+    """kWh in one unit of the plan's energy, or None for a unit not known.
+
+    Average power needs real energy whatever the plan bills in: 3.6 MJ in
+    an hour is a steady 1 kW.
+    """
+    return _KWH_PER_UNIT.get(plan_unit)
 
 
 def avg_watts_from_energy(kwh_over_window: float, window_hours: float) -> float:

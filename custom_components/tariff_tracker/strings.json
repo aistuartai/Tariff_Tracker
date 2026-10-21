@@ -68,7 +68,8 @@
           "start_time": "Window 1 start time",
           "end_time": "Window 1 end time",
           "days": "Applies on",
-          "tier1_limit_kwh": "First-tier limit (kWh/day, blank = flat rate for whole period)",
+          "tier1_limit_kwh": "First-tier limit per day (blank = flat rate for whole period)",
+          "tier_reset": "First-tier limit is counted",
           "tier1_rate": "First-tier rate",
           "tier2_rate": "Rate after first-tier limit is used",
           "bonus_enabled": "Enable no-usage bonus for this period",
@@ -80,7 +81,7 @@
           "window3_start_time": "Window 3 start time (optional)",
           "window3_end_time": "Window 3 end time (optional)"
         },
-        "description": "A period can cover several separate windows - use windows 2 and 3 if this band is split by other periods (e.g. a shoulder rate that applies both before peak and overnight). Leave them blank for a single window."
+        "description": "A period can cover several separate windows - use windows 2 and 3 if this band is split by other periods (e.g. a shoulder rate that applies both before peak and overnight). Leave them blank for a single window.\n\nRates and limits are in {unit}, the unit of the source sensor this period reads. A retailer that pools the daily limit across the bill (e.g. 15 per day over a 30-day bill = 450 for the whole bill) is modelled by counting the limit over the billing period."
       }
     },
     "error": {
@@ -102,6 +103,12 @@
         "all": "Every day",
         "weekdays": "Weekdays only",
         "weekends": "Weekends only"
+      }
+    },
+    "tier_reset": {
+      "options": {
+        "daily": "Per day - resets at midnight",
+        "billing_period": "Pooled over the billing period - daily limit x days in the period"
       }
     },
     "bonus_calc_mode": {

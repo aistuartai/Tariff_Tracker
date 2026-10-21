@@ -24,7 +24,8 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
     single period rather than two with duplicated rates
   - a day filter (every day / weekdays / weekends)
   - a flat rate, or a two-tier rate (e.g. "first 50 kWh/day free, then a
-    balance rate")
+    balance rate"), with the tier limit counted either per day or pooled
+    across the billing period
   - an optional conditional bonus: a fixed $ credit if average import power
     during that period's window stays under a configured watt threshold
 - Bonus can be calculated purely from your energy sensor's usage during the
@@ -38,12 +39,15 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
   import periods (day filter, tiered rates), and the credit is netted
   straight out of `cost_today` / `cost_this_month` / `cost_this_billing_period`
   automatically — no separate bill math needed
+- Works for gas too: rates, tier limits and energy totals follow the source
+  sensor's unit, so an MJ gas meter is priced in $/MJ
 
 ## Requirements
 
 - An existing sensor for your home's grid import **energy** (kWh,
   `state_class: total_increasing`) — most inverter/battery/smart-meter
-  integrations already expose one.
+  integrations already expose one. Wh and MWh sensors are converted to kWh;
+  a gas meter in MJ or GJ is used in its own unit (see below).
 - Optionally, a grid import **power** (W) sensor if you want live bonus
   window feedback instead of the after-the-fact energy-based calculation.
 - Optionally, a grid export **energy** (kWh, `total_increasing`) sensor if
@@ -80,7 +84,7 @@ directory and restart Home Assistant.
 | Entity | Description |
 |---|---|
 | `sensor.<plan>_current_period` | Name of the active import period right now |
-| `sensor.<plan>_current_rate` | $/kWh charged right now |
+| `sensor.<plan>_current_rate` | $/kWh (or $/MJ etc. — the plan's unit) charged right now |
 | `sensor.<plan>_cost_today` | Running net cost for today (import cost + daily charge − export credit − bonus) |
 | `sensor.<plan>_cost_this_month` | Running net cost for the calendar month |
 | `sensor.<plan>_cost_this_billing_period` | Running net cost for the current billing cycle |
@@ -94,7 +98,7 @@ directory and restart Home Assistant.
 | `sensor.<period>_avg_power_today` | Average import power (W): that period's energy today over the hours its windows have been open today. Computed from the schedule, so a restart mid-window does not distort it |
 | `sensor.<period>_energy_today` | kWh used in that period today; resets at midnight (and self-corrects on restart if one lands right on that boundary), holding its value for the rest of the day once the window closes |
 | `sensor.<period>_window` *(diagnostic)* | The period's configured window(s), e.g. `15:00-16:00, 23:00-12:00`. Full list, count and total hours as attributes |
-| `sensor.<period>_rate` *(diagnostic)* | The period's configured $/kWh rate (full tier list as an attribute) |
+| `sensor.<period>_rate` *(diagnostic)* | The period's configured per-unit rate (full tier list and `tier_reset` as attributes) |
 | `sensor.<period>_bonus_threshold` *(diagnostic)* | Configured bonus power threshold, in W; only present if the period has a bonus configured. Bonus window + credit amount as attributes |
 
 Only present if an export energy sensor is configured:
@@ -106,6 +110,42 @@ Only present if an export energy sensor is configured:
 | `sensor.<plan>_export_credit_today` | Feed-in credit earned today (already netted into `cost_today`) |
 | `sensor.<plan>_export_credit_this_month` | Feed-in credit earned this month |
 | `sensor.<plan>_export_credit_this_billing_period` | Feed-in credit earned this billing cycle |
+
+### Units: electricity and gas
+
+A plan is priced in the unit of its source energy sensor, read from that
+sensor's `unit_of_measurement`:
+
+- **Wh, kWh, MWh** — the plan is in kWh. Wh and MWh readings are converted,
+  so rates are always entered per kWh as retailers quote them.
+- **MJ, GJ, or any other energy unit** — the plan uses that unit as-is.
+  Enter rates in $/MJ and tier limits in MJ/day; rate and energy entities
+  are labelled to match.
+
+`avg_power_today` and the bonus threshold are still real watts whatever the
+unit (3.6 MJ in an hour is 1 kW).
+
+If a source sensor changes its unit, its baseline is restarted rather than
+differenced across the change.
+
+### Tier limit: per day or pooled over the bill
+
+The first-tier limit is always entered as a **per-day** figure. *First-tier
+limit is counted* decides how it's applied:
+
+- **Per day** (default) — the allowance resets at midnight. "First 15 kWh
+  each day."
+- **Pooled over the billing period** — the allowance is the daily limit ×
+  the billing period's length in days, measured against everything used in
+  that period since the bill started. Some retailers (GloBird among them)
+  bill this way: a 15 kWh/day step on a 30-day bill is 450 kWh for the
+  bill, so a heavy EV-charging day spends allowance left unused on quiet
+  days instead of jumping straight to the higher rate.
+
+Pooled tiers need the billing cycle set correctly, since its length sizes
+the pool. Usage is charged at the first-tier rate until the whole bill's
+pool is spent, so early in a bill a heavy day costs less than a per-day
+plan would show — which is how the final bill works it out too.
 
 ### Periods with more than one window
 

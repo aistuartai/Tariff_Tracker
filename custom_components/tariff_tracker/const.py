@@ -32,8 +32,22 @@ CONF_PERIOD_WINDOWS = "windows"
 CONF_PERIOD_DAYS = "days"
 CONF_PERIOD_TIERS = "tiers"
 CONF_PERIOD_BONUS = "bonus"
+# When a period's tier allowance resets. Absent means daily, which is how
+# every period saved before this option existed behaves.
+CONF_PERIOD_TIER_RESET = "tier_reset"
 
-# Per-tier keys (list of dicts in CONF_PERIOD_TIERS)
+# "First N/day", counted afresh each day.
+TIER_RESET_DAILY = "daily"
+# "First N/day" pooled across the billing period: the allowance is the daily
+# limit times the period's length in days, measured against the period's
+# total usage. Some retailers (GloBird among them) bill this way, so a
+# heavy day spends unused allowance from quiet ones.
+TIER_RESET_BILLING_PERIOD = "billing_period"
+
+# Per-tier keys (list of dicts in CONF_PERIOD_TIERS). The limit is in the
+# plan's energy unit (see tariff_engine.plan_energy_unit) - kWh for
+# electricity, but MJ for a gas plan read from an MJ meter. The key name is
+# historical and kept so stored configs still load.
 CONF_TIER_LIMIT_KWH = "limit_kwh"
 CONF_TIER_RATE = "rate"
 

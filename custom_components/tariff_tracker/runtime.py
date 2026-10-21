@@ -9,7 +9,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Callable
 
+from homeassistant.const import ATTR_UNIT_OF_MEASUREMENT
 from homeassistant.core import Event, HomeAssistant, State, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_change,
@@ -36,7 +38,6 @@ from .const import (
     CONF_PERIOD_END_TIME,
     CONF_PERIOD_NAME,
     CONF_PERIOD_START_TIME,
-    CONF_PERIOD_TIERS,
     CONF_PERIODS,
     BILLING_CYCLE_CALENDAR_MONTH,
     DAYS_ALL,
@@ -86,6 +87,9 @@ class PlanRuntime:
     plan_name: str
     options: dict[str, Any]
 
+    # Last cumulative reading of the import source, in the source sensor's
+    # own unit (energy_source_unit) - deltas are converted to the plan's unit
+    # as they're applied, so the baseline itself never needs converting.
     last_energy_kwh: float | None = None
     # Entity id the import baseline above was read from. Swapping the source
     # sensor (options flow) leaves a baseline belonging to a different meter:
@@ -95,7 +99,18 @@ class PlanRuntime:
     # usage. Storing the origin lets restore drop a stale baseline and
     # re-seed from the new sensor's first reading instead.
     last_energy_source: str | None = None
+    # unit_of_measurement of the import source, as last seen. Decides the
+    # plan's unit (see engine.plan_energy_unit) and lets the event handler
+    # notice the source changing unit under a stored baseline, which would
+    # otherwise difference two readings in different units.
+    energy_source_unit: str | None = None
     tier_usage_today: dict[str, float] = field(default_factory=dict)
+    # Usage counted toward each period's tiers since the billing period
+    # began, for periods whose allowance pools across the billing period
+    # (engine.tier_view). Kept apart from period_energy_kwh_billing_period
+    # because a manual cost reset clears that one, and clearing tier
+    # progression is reset_tier_usage's job alone.
+    tier_usage_billing_period: dict[str, float] = field(default_factory=dict)
     energy_by_period_today: dict[str, float] = field(default_factory=dict)
     bonus_earned_today: dict[str, bool | None] = field(default_factory=dict)
     bonus_samples: dict[str, BonusWindowSample] = field(default_factory=dict)
@@ -109,7 +124,9 @@ class PlanRuntime:
     last_export_kwh: float | None = None
     # Same guard as last_energy_source, for the export baseline.
     last_export_source: str | None = None
+    export_source_unit: str | None = None
     export_tier_usage_today: dict[str, float] = field(default_factory=dict)
+    export_tier_usage_billing_period: dict[str, float] = field(default_factory=dict)
 
     # Independent running total of kWh used in each period today. Separate
     # from energy_by_period_today (which the avg-watts calc owns) so this
@@ -167,6 +184,38 @@ class PlanRuntime:
     def daily_charge(self) -> float:
         return self.options.get(CONF_DAILY_CHARGE, 0.0)
 
+    @property
+    def energy_unit(self) -> str:
+        """Unit the plan bills import in: kWh, or e.g. MJ for a gas meter."""
+        return engine.plan_energy_unit(self.energy_source_unit)[0]
+
+    @property
+    def export_energy_unit(self) -> str:
+        return engine.plan_energy_unit(self.export_source_unit)[0]
+
+    def _billing_days(self) -> int | None:
+        if self.billing_period_start is None or self.billing_period_end is None:
+            return None
+        return (self.billing_period_end - self.billing_period_start).days
+
+    def _import_tiers(self, period: dict[str, Any]) -> tuple[list[dict[str, Any]], float]:
+        name = period[CONF_PERIOD_NAME]
+        return engine.tier_view(
+            period,
+            self.tier_usage_today.get(name, 0.0),
+            self.tier_usage_billing_period.get(name, 0.0),
+            self._billing_days(),
+        )
+
+    def _export_tiers(self, period: dict[str, Any]) -> tuple[list[dict[str, Any]], float]:
+        name = period[CONF_PERIOD_NAME]
+        return engine.tier_view(
+            period,
+            self.export_tier_usage_today.get(name, 0.0),
+            self.export_tier_usage_billing_period.get(name, 0.0),
+            self._billing_days(),
+        )
+
     def current_period(self) -> dict[str, Any] | None:
         return engine.find_active_period(self.periods, dt_util.now())
 
@@ -174,8 +223,7 @@ class PlanRuntime:
         period = self.current_period()
         if period is None:
             return None
-        used_today = self.tier_usage_today.get(period[CONF_PERIOD_NAME], 0.0)
-        return engine.tier_rate_for_usage(period[CONF_PERIOD_TIERS], used_today)
+        return engine.tier_rate_for_usage(*self._import_tiers(period))
 
     def current_period_avg_watts(self, period_name: str) -> float | None:
         """Average import power today for one period.
@@ -194,8 +242,12 @@ class PlanRuntime:
         elapsed_hours = engine.period_elapsed_hours_today(period, dt_util.now())
         if elapsed_hours <= 0:
             return None
+        kwh_per_unit = engine.kwh_per_plan_unit(self.energy_unit)
+        if kwh_per_unit is None:
+            return None
         return engine.avg_watts_from_energy(
-            self.period_energy_kwh_today.get(period_name, 0.0), elapsed_hours
+            self.period_energy_kwh_today.get(period_name, 0.0) * kwh_per_unit,
+            elapsed_hours,
         )
 
     def current_export_period(self) -> dict[str, Any] | None:
@@ -205,8 +257,7 @@ class PlanRuntime:
         period = self.current_export_period()
         if period is None:
             return None
-        used_today = self.export_tier_usage_today.get(period[CONF_PERIOD_NAME], 0.0)
-        return engine.tier_rate_for_usage(period[CONF_PERIOD_TIERS], used_today)
+        return engine.tier_rate_for_usage(*self._export_tiers(period))
 
     def days_remaining(self) -> int | None:
         if self.billing_period_end is None:
@@ -271,6 +322,8 @@ class PlanRuntime:
         energy_sensor = self.options[CONF_IMPORT_ENERGY_SENSOR]
         export_sensor = self.options.get(CONF_EXPORT_ENERGY_SENSOR)
         if self._rebase_for_source_change(energy_sensor, export_sensor):
+            await self._async_save()
+        if self._resolve_source_units(energy_sensor, export_sensor):
             await self._async_save()
         if self._seed_missing_baselines(energy_sensor, export_sensor):
             await self._async_save()
@@ -369,10 +422,39 @@ class PlanRuntime:
         )
         if clear_import:
             self.last_energy_kwh = None
+            self.energy_source_unit = None
         self.last_energy_source = import_source
         if clear_export or export_source is None:
             self.last_export_kwh = None
+            self.export_source_unit = None
         self.last_export_source = export_source
+        return changed
+
+    def _source_unit(self, entity_id: str) -> str | None:
+        """A source sensor's unit, from its state or else its registry entry.
+
+        At a cold start a Zigbee/MQTT sensor is often still `unknown` with
+        no attributes when this runs; the entity registry keeps the unit it
+        last reported, so the plan's entities aren't labelled kWh by
+        default until the sensor's first update.
+        """
+        state = self.hass.states.get(entity_id)
+        if state is not None and state.attributes.get(ATTR_UNIT_OF_MEASUREMENT):
+            return state.attributes[ATTR_UNIT_OF_MEASUREMENT]
+        entry = er.async_get(self.hass).async_get(entity_id)
+        return entry.unit_of_measurement if entry is not None else None
+
+    def _resolve_source_units(
+        self, energy_sensor: str, export_sensor: str | None
+    ) -> bool:
+        """Fill in any source unit not yet known. Returns True if one was."""
+        changed = False
+        if self.energy_source_unit is None:
+            self.energy_source_unit = self._source_unit(energy_sensor)
+            changed = self.energy_source_unit is not None
+        if export_sensor and self.export_source_unit is None:
+            self.export_source_unit = self._source_unit(export_sensor)
+            changed = changed or self.export_source_unit is not None
         return changed
 
     def _seed_missing_baselines(
@@ -417,6 +499,7 @@ class PlanRuntime:
     def _restore(self, saved: dict[str, Any]) -> None:
         self.last_energy_kwh = saved.get("last_energy_kwh")
         self.last_energy_source = saved.get("last_energy_source")
+        self.energy_source_unit = saved.get("energy_source_unit")
         self.tier_usage_today = saved.get("tier_usage_today", {})
         self.energy_by_period_today = saved.get("energy_by_period_today", {})
         self.bonus_earned_today = saved.get("bonus_earned_today", {})
@@ -430,6 +513,7 @@ class PlanRuntime:
         )
         self.last_export_kwh = saved.get("last_export_kwh")
         self.last_export_source = saved.get("last_export_source")
+        self.export_source_unit = saved.get("export_source_unit")
         self.export_tier_usage_today = saved.get("export_tier_usage_today", {})
         self.export_credit_today = saved.get("export_credit_today", 0.0)
         self.export_credit_month = saved.get("export_credit_month", 0.0)
@@ -444,6 +528,17 @@ class PlanRuntime:
         self.period_energy_kwh_total = saved.get("period_energy_kwh_total", {})
         self.export_period_energy_kwh_total = saved.get(
             "export_period_energy_kwh_total", {}
+        )
+        # Upgrade path: state from before billing-period tiers existed has
+        # no pooled tier usage. The per-period billing-period energy totals
+        # cover the same span, so a period switched to billing-period reset
+        # mid-cycle starts from what it has really used, not from zero.
+        self.tier_usage_billing_period = saved.get(
+            "tier_usage_billing_period", dict(self.period_energy_kwh_billing_period)
+        )
+        self.export_tier_usage_billing_period = saved.get(
+            "export_tier_usage_billing_period",
+            dict(self.export_period_energy_kwh_billing_period),
         )
         if saved.get("today"):
             self.today = date.fromisoformat(saved["today"])
@@ -470,7 +565,9 @@ class PlanRuntime:
             {
                 "last_energy_kwh": self.last_energy_kwh,
                 "last_energy_source": self.last_energy_source,
+                "energy_source_unit": self.energy_source_unit,
                 "tier_usage_today": self.tier_usage_today,
+                "tier_usage_billing_period": self.tier_usage_billing_period,
                 "energy_by_period_today": self.energy_by_period_today,
                 "bonus_earned_today": self.bonus_earned_today,
                 "bonus_finalized_for": self.bonus_finalized_for,
@@ -481,7 +578,9 @@ class PlanRuntime:
                 "bonus_days_earned_billing_period": self.bonus_days_earned_billing_period,
                 "last_export_kwh": self.last_export_kwh,
                 "last_export_source": self.last_export_source,
+                "export_source_unit": self.export_source_unit,
                 "export_tier_usage_today": self.export_tier_usage_today,
+                "export_tier_usage_billing_period": self.export_tier_usage_billing_period,
                 "export_credit_today": self.export_credit_today,
                 "export_credit_month": self.export_credit_month,
                 "export_credit_billing_period": self.export_credit_billing_period,
@@ -539,6 +638,8 @@ class PlanRuntime:
         if reset_tier_usage:
             self.tier_usage_today = {}
             self.export_tier_usage_today = {}
+            self.tier_usage_billing_period = {}
+            self.export_tier_usage_billing_period = {}
 
         await self._async_save()
         self._notify()
@@ -592,6 +693,8 @@ class PlanRuntime:
             self.export_credit_billing_period = 0.0
             self.period_energy_kwh_billing_period = {}
             self.export_period_energy_kwh_billing_period = {}
+            self.tier_usage_billing_period = {}
+            self.export_tier_usage_billing_period = {}
 
     def _recompute_month_bounds(self, today: date) -> None:
         """Self-correct cost_month/export_credit_month on setup if the last
@@ -662,16 +765,30 @@ class PlanRuntime:
             return
 
         now = dt_util.now()
-        if self.last_energy_kwh is None:
+        unit = new_state.attributes.get(ATTR_UNIT_OF_MEASUREMENT) or self.energy_source_unit
+        if self.last_energy_kwh is None or (
+            self.energy_source_unit is not None and unit != self.energy_source_unit
+        ):
             # First reading since the baseline went missing (fresh plan, or
-            # a source swap). Persist it right away: an unsaved baseline is
-            # lost on the next restart, which re-opens the accounting hole
-            # this seeding exists to close.
+            # a source swap), or the source changed unit under its baseline,
+            # which makes the two readings incomparable - a Wh -> kWh switch
+            # reads as a meter reset and books the whole total. Persist the
+            # seed right away: an unsaved baseline is lost on the next
+            # restart, which re-opens the accounting hole seeding closes.
+            if self.last_energy_kwh is not None:
+                _LOGGER.warning(
+                    "%s: import sensor changed unit %s -> %s, restarting its baseline",
+                    self.plan_name,
+                    self.energy_source_unit,
+                    unit,
+                )
             self.last_energy_kwh = new_kwh
+            self.energy_source_unit = unit
             self.hass.async_create_task(self._async_save())
             self._notify()
             return
 
+        self.energy_source_unit = unit
         delta = new_kwh - self.last_energy_kwh
         if delta < 0:
             # Meter reset (e.g. firmware restart) rather than real usage.
@@ -679,7 +796,7 @@ class PlanRuntime:
         self.last_energy_kwh = new_kwh
 
         if delta > 0:
-            self._apply_delta(now, delta)
+            self._apply_delta(now, delta * engine.plan_energy_unit(unit)[1])
 
         self.hass.async_create_task(self._async_save())
         self._notify()
@@ -689,10 +806,12 @@ class PlanRuntime:
         if period is None:
             return  # configuration gap in period coverage
         name = period[CONF_PERIOD_NAME]
-        used_today = self.tier_usage_today.get(name, 0.0)
-        cost = engine.cost_of_delta(period, used_today, delta_kwh)
+        cost = engine.cost_of_delta(*self._import_tiers(period), delta_kwh)
 
-        self.tier_usage_today[name] = used_today + delta_kwh
+        self.tier_usage_today[name] = self.tier_usage_today.get(name, 0.0) + delta_kwh
+        self.tier_usage_billing_period[name] = (
+            self.tier_usage_billing_period.get(name, 0.0) + delta_kwh
+        )
         self.energy_by_period_today[name] = (
             self.energy_by_period_today.get(name, 0.0) + delta_kwh
         )
@@ -722,13 +841,26 @@ class PlanRuntime:
             return
 
         now = dt_util.now()
-        if self.last_export_kwh is None:
-            # Persist the seed immediately; see _handle_energy_event.
+        unit = new_state.attributes.get(ATTR_UNIT_OF_MEASUREMENT) or self.export_source_unit
+        if self.last_export_kwh is None or (
+            self.export_source_unit is not None and unit != self.export_source_unit
+        ):
+            # Seed (or re-seed on a unit change) and persist immediately;
+            # see _handle_energy_event.
+            if self.last_export_kwh is not None:
+                _LOGGER.warning(
+                    "%s: export sensor changed unit %s -> %s, restarting its baseline",
+                    self.plan_name,
+                    self.export_source_unit,
+                    unit,
+                )
             self.last_export_kwh = new_kwh
+            self.export_source_unit = unit
             self.hass.async_create_task(self._async_save())
             self._notify()
             return
 
+        self.export_source_unit = unit
         delta = new_kwh - self.last_export_kwh
         if delta < 0:
             # Meter reset (e.g. firmware restart) rather than real usage.
@@ -736,7 +868,7 @@ class PlanRuntime:
         self.last_export_kwh = new_kwh
 
         if delta > 0:
-            self._apply_export_delta(now, delta)
+            self._apply_export_delta(now, delta * engine.plan_energy_unit(unit)[1])
 
         self.hass.async_create_task(self._async_save())
         self._notify()
@@ -746,10 +878,14 @@ class PlanRuntime:
         if period is None:
             return  # no export period configured for this moment
         name = period[CONF_PERIOD_NAME]
-        used_today = self.export_tier_usage_today.get(name, 0.0)
-        credit = engine.cost_of_delta(period, used_today, delta_kwh)
+        credit = engine.cost_of_delta(*self._export_tiers(period), delta_kwh)
 
-        self.export_tier_usage_today[name] = used_today + delta_kwh
+        self.export_tier_usage_today[name] = (
+            self.export_tier_usage_today.get(name, 0.0) + delta_kwh
+        )
+        self.export_tier_usage_billing_period[name] = (
+            self.export_tier_usage_billing_period.get(name, 0.0) + delta_kwh
+        )
         self.export_period_energy_kwh_billing_period[name] = (
             self.export_period_energy_kwh_billing_period.get(name, 0.0) + delta_kwh
         )
@@ -838,7 +974,10 @@ class PlanRuntime:
             # that wraps midnight (23:00-06:00) subtracts to a negative
             # span, which would make average power negative and hand out
             # the bonus unconditionally.
-            energy = self.energy_by_period_today.get(period_name, 0.0)
+            # An unrecognised unit is taken as kWh, as it was before
+            # plans had units at all.
+            kwh_per_unit = engine.kwh_per_plan_unit(self.energy_unit) or 1.0
+            energy = self.energy_by_period_today.get(period_name, 0.0) * kwh_per_unit
             avg_w = engine.avg_watts_from_energy(
                 energy, engine.window_hours(start_t, end_t)
             )

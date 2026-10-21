@@ -6,6 +6,8 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
+from homeassistant.const import ATTR_UNIT_OF_MEASUREMENT
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
 from . import tariff_engine as engine
@@ -32,6 +34,7 @@ from .const import (
     CONF_PERIOD_END_TIME,
     CONF_PERIOD_NAME,
     CONF_PERIOD_START_TIME,
+    CONF_PERIOD_TIER_RESET,
     CONF_PERIOD_TIERS,
     CONF_PERIOD_WINDOWS,
     CONF_PERIODS,
@@ -40,6 +43,8 @@ from .const import (
     DAYS_ALL,
     DAYS_WEEKDAYS,
     DAYS_WEEKENDS,
+    TIER_RESET_BILLING_PERIOD,
+    TIER_RESET_DAILY,
 )
 
 # How many windows one period's form exposes. Window 1 is required; the rest
@@ -105,6 +110,12 @@ ACTION_DELETE_PREFIX = "__delete__"
 _KIND_CONFIG = {
     "import": (CONF_PERIODS, True),
     "export": (CONF_EXPORT_PERIODS, False),
+}
+
+# kind -> the source sensor whose unit that kind of period is priced in
+_KIND_SENSOR = {
+    "import": CONF_IMPORT_ENERGY_SENSOR,
+    "export": CONF_EXPORT_ENERGY_SENSOR,
 }
 
 
@@ -395,6 +406,9 @@ class TariffTrackerOptionsFlow(OptionsFlow):
 
                 period = {
                     CONF_PERIOD_NAME: user_input[CONF_PERIOD_NAME],
+                    CONF_PERIOD_TIER_RESET: user_input.get(
+                        CONF_PERIOD_TIER_RESET, TIER_RESET_DAILY
+                    ),
                     # start_time/end_time mirror the first window. The engine
                     # reads CONF_PERIOD_WINDOWS, but keeping these in sync
                     # means periods saved here still make sense to anything
@@ -460,7 +474,10 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                 )
                 window_fields[key] = selector.TimeSelector()
 
-        rate_unit = "$/kWh you're charged" if kind == "import" else "$/kWh you're credited"
+        unit = self._plan_unit(kind)
+        rate_unit = (
+            f"$/{unit} you're charged" if kind == "import" else f"$/{unit} you're credited"
+        )
 
         schema_dict: dict[Any, Any] = {
             vol.Required(
@@ -484,7 +501,18 @@ class TariffTrackerOptionsFlow(OptionsFlow):
                 )
             ),
             tier1_limit_key: selector.NumberSelector(
-                selector.NumberSelectorConfig(min=0, step=0.01, mode="box")
+                selector.NumberSelectorConfig(
+                    min=0, step=0.01, mode="box", unit_of_measurement=f"{unit}/day"
+                )
+            ),
+            vol.Required(
+                CONF_PERIOD_TIER_RESET,
+                default=existing.get(CONF_PERIOD_TIER_RESET, TIER_RESET_DAILY),
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[TIER_RESET_DAILY, TIER_RESET_BILLING_PERIOD],
+                    translation_key="tier_reset",
+                )
             ),
             vol.Required(
                 "tier1_rate",
@@ -557,8 +585,27 @@ class TariffTrackerOptionsFlow(OptionsFlow):
             step_id="period_form",
             data_schema=vol.Schema(schema_dict),
             errors=errors,
-            description_placeholders={"kind": kind.capitalize()},
+            description_placeholders={"kind": kind.capitalize(), "unit": unit},
         )
+
+    def _plan_unit(self, kind: str) -> str:
+        """The unit this kind of period is priced in, for form labels.
+
+        Read the same way the runtime reads it - the source sensor's state,
+        else its registry entry - so a gas plan's form asks for MJ rather
+        than kWh.
+        """
+        key = _KIND_SENSOR[kind]
+        entity_id = self._options.get(key, self._entry.data.get(key))
+        unit = None
+        if entity_id:
+            state = self.hass.states.get(entity_id)
+            if state is not None:
+                unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
+            if not unit:
+                entry = er.async_get(self.hass).async_get(entity_id)
+                unit = entry.unit_of_measurement if entry is not None else None
+        return engine.plan_energy_unit(unit)[0]
 
     # ---- Finish -----------------------------------------------------------
 

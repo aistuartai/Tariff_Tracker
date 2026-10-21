@@ -3,9 +3,41 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.14.0] - 2026-09-20
+## [0.14.0] - 2026-10-21
 
 ### Added
+- Per-period **tier limit counting**: *per day* (the existing behaviour, and
+  the default) or *pooled over the billing period*. Pooled multiplies the
+  daily limit by the billing period's length and measures it against
+  everything used under that period since the bill started - how GloBird
+  and others bill a "first N kWh/day" step. A spiky day (EV charging) then
+  draws on allowance left unused on quiet days instead of billing straight
+  at the higher rate. Applies to export periods too. ([#2])
+
+  Pooled usage is tracked separately from the per-period billing-period
+  energy totals, so a manual cost reset doesn't erase tier progress; only
+  `reset_tier_usage` does. Upgrading seeds it from those totals, so a
+  period switched to pooled mid-bill starts from what it has really used.
+- **Plan units follow the source sensor** ([#1]). Energy totals, rate
+  sensors and the period form's rate and limit fields are labelled in the
+  plan's unit instead of a hardcoded kWh, so a gas plan read from an MJ
+  meter shows $/MJ and MJ. Average power and the bonus still work in real
+  watts, converting from the plan's unit.
+
+### Fixed
+- A source sensor reporting **Wh** (or MWh) was differenced raw against
+  $/kWh rates and kWh tier limits - billed 1000x over, with tier allowances
+  1000x too small. Electrical units are now converted to kWh. Per-period
+  energy counters already accumulated in Wh are not rescaled.
+- A source sensor changing unit under a stored baseline (Wh -> kWh, say)
+  would have read as a meter reset and booked its whole total. The
+  baseline now restarts on a unit change, the same way it does on a source
+  change.
+
+### Changed
+- Existing gas/MJ plans will see their energy and rate entities change unit
+  from kWh to MJ. Home Assistant may raise a statistics repair for the unit
+  change on those entities; the values themselves were always MJ.
 - Options flow gains a **Source sensors** step: the import energy sensor,
   import power sensor and export energy sensor can now be changed after
   setup, from the same UI as periods and billing cycle. Previously they
@@ -43,6 +75,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   State saved by earlier versions has no recorded source id and is treated
   as belonging to the currently configured sensor, so upgrading doesn't
   discard a valid baseline.
+
+[#1]: https://github.com/aistuartai/Tariff_Tracker/issues/1
+[#2]: https://github.com/aistuartai/Tariff_Tracker/issues/2
 
 ## [0.13.0] - 2026-09-07
 
