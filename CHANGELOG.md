@@ -33,6 +33,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   would have read as a meter reset and booked its whole total. The
   baseline now restarts on a unit change, the same way it does on a source
   change.
+- **Energy-based bonus credited regardless of usage** when the bonus window
+  ends at the same time as its period (e.g. both at 21:00). Two callbacks
+  fire in that second in no guaranteed order; when the period's close ran
+  first it cleared the bonus's energy total, and the bonus was then settled
+  against zero usage. The period close no longer touches it. Live-power
+  bonuses were unaffected.
+- **Energy-based bonus counted usage from outside its window.** A bonus
+  window narrower than its period (18:00-21:00 inside a 16:00-21:00 peak)
+  was settled on all of the period's energy since it opened, divided by the
+  bonus window's hours - a busy late afternoon could withhold a bonus that
+  was earned. Only usage inside the bonus window now counts.
 
 ### Changed
 - Existing gas/MJ plans will see their energy and rate entities change unit

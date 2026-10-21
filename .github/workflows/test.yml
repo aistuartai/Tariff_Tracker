@@ -12,6 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: pip install -r requirements_test.txt
+          python-version: "3.13"
+      - run: pip install -r requirements_test.txt -r requirements_test_ha.txt
+      - run: ruff check --select F,E9 custom_components tests scripts
       - run: pytest tests/

@@ -51,7 +51,6 @@ def test_tier_rate_for_usage_picks_correct_bracket():
 
 
 def test_cost_of_delta_splits_across_tier_boundary():
-    tiers = OFF_PEAK["tiers"]
     # Already used 48 kWh today at the free tier; import 4 more kWh, so
     # 2 kWh finish the free tier and 2 kWh land in the 0.275 balance tier.
     cost = engine.cost_of_delta(OFF_PEAK["tiers"], already_used=48, delta=4)

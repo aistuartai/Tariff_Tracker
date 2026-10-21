@@ -1,0 +1,4 @@
+# Home Assistant test harness for tests/ha. Linux/WSL only - see
+# scripts/setup_wsl_test_env.sh. Each harness release pins one HA version.
+pytest-homeassistant-custom-component==0.13.316
+ruff==0.14.0

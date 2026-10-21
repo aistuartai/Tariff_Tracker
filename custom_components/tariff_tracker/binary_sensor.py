@@ -30,7 +30,6 @@ async def async_setup_entry(
     for period in runtime.periods:
         if not period.get(CONF_PERIOD_BONUS):
             continue
-        name = period[CONF_PERIOD_NAME]
         entities.append(BonusActiveWindowSensor(runtime, entry, period))
         entities.append(BonusEarnedTodaySensor(runtime, entry, period))
 

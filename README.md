@@ -201,3 +201,20 @@ unaffected by reloads and restarts.
 Issues and PRs welcome. Core cost/bonus math lives in
 `custom_components/tariff_tracker/tariff_engine.py` and is plain Python with
 no Home Assistant imports, so it's easy to unit test — see `tests/`.
+
+`tests/ha/` drives the integration inside a real Home Assistant instance
+(config entry setup, sensor state events, midnight and bonus timers, the
+store) using `pytest-homeassistant-custom-component`. That harness doesn't
+install on Windows; on Linux `pip install -r requirements_test_ha.txt`, or
+under WSL run `scripts/setup_wsl_test_env.sh`. Without it, `pytest` runs the
+engine tests and skips `tests/ha/`.
+
+Before tagging a release, run:
+
+```
+python scripts/release_check.py [--live <path to deployed tariff_tracker>]
+```
+
+It checks the version against existing tags and the changelog, the manifest
+and translation files, lint, and runs both test suites (the HA ones via WSL),
+then reports READY or NOT READY.

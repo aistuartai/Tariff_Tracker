@@ -111,6 +111,8 @@ class PlanRuntime:
     # because a manual cost reset clears that one, and clearing tier
     # progression is reset_tier_usage's job alone.
     tier_usage_billing_period: dict[str, float] = field(default_factory=dict)
+    # Energy used inside each period's bonus window today - the numerator
+    # the energy_delta bonus is settled on. Cleared by the bonus finalizer.
     energy_by_period_today: dict[str, float] = field(default_factory=dict)
     bonus_earned_today: dict[str, bool | None] = field(default_factory=dict)
     bonus_samples: dict[str, BonusWindowSample] = field(default_factory=dict)
@@ -129,8 +131,8 @@ class PlanRuntime:
     export_tier_usage_billing_period: dict[str, float] = field(default_factory=dict)
 
     # Independent running total of kWh used in each period today. Separate
-    # from energy_by_period_today (which the avg-watts calc owns) so this
-    # can't interfere with that calc; resets at midnight, not at the
+    # from energy_by_period_today (the bonus numerator) so this
+    # can't interfere with the bonus; resets at midnight, not at the
     # period's own end time, so it holds its value for the rest of the day
     # once the window closes.
     period_energy_kwh_today: dict[str, float] = field(default_factory=dict)
@@ -812,9 +814,14 @@ class PlanRuntime:
         self.tier_usage_billing_period[name] = (
             self.tier_usage_billing_period.get(name, 0.0) + delta_kwh
         )
-        self.energy_by_period_today[name] = (
-            self.energy_by_period_today.get(name, 0.0) + delta_kwh
-        )
+        # The bonus numerator counts only what falls inside the bonus window.
+        # It is divided by that window's length, so usage earlier in a wider
+        # period (16:00-18:00 ahead of an 18:00-21:00 bonus) would otherwise
+        # count against the bonus and withhold one that was earned.
+        if self._in_bonus_window(period, now):
+            self.energy_by_period_today[name] = (
+                self.energy_by_period_today.get(name, 0.0) + delta_kwh
+            )
         self.period_energy_kwh_today[name] = (
             self.period_energy_kwh_today.get(name, 0.0) + delta_kwh
         )
@@ -920,16 +927,8 @@ class PlanRuntime:
         bonus = active.get(CONF_PERIOD_BONUS)
         if not bonus or bonus.get("calc_mode") != BONUS_CALC_LIVE_POWER:
             return
-        bonus_start = bonus.get(CONF_BONUS_START_TIME)
-        bonus_end = bonus.get(CONF_BONUS_END_TIME)
-        if bonus_start and bonus_end:
-            window = {
-                CONF_PERIOD_START_TIME: bonus_start,
-                CONF_PERIOD_END_TIME: bonus_end,
-                CONF_PERIOD_DAYS: active.get(CONF_PERIOD_DAYS, DAYS_ALL),
-            }
-            if not engine.period_contains_time(window, now):
-                return
+        if not self._in_bonus_window(active, now):
+            return
         name = active[CONF_PERIOD_NAME]
         sample = self.bonus_samples.setdefault(name, BonusWindowSample())
         sample.sample(now, watts)
@@ -1003,6 +1002,26 @@ class PlanRuntime:
         self.energy_by_period_today.pop(period_name, None)
         return True
 
+    def _in_bonus_window(self, period: dict[str, Any], now: datetime) -> bool:
+        """Whether `now`, already inside `period`, is inside its bonus window.
+
+        False for a period without a bonus. A bonus with no sub-window of its
+        own covers the whole period.
+        """
+        bonus = period.get(CONF_PERIOD_BONUS)
+        if not bonus:
+            return False
+        bonus_start = bonus.get(CONF_BONUS_START_TIME)
+        bonus_end = bonus.get(CONF_BONUS_END_TIME)
+        if not (bonus_start and bonus_end):
+            return True
+        window = {
+            CONF_PERIOD_START_TIME: bonus_start,
+            CONF_PERIOD_END_TIME: bonus_end,
+            CONF_PERIOD_DAYS: period.get(CONF_PERIOD_DAYS, DAYS_ALL),
+        }
+        return engine.period_contains_time(window, now)
+
     def _bonus_window_end(self, period: dict[str, Any]):
         """The time of day a period's bonus is settled at."""
         bonus = period.get(CONF_PERIOD_BONUS)
@@ -1070,25 +1089,19 @@ class PlanRuntime:
             # windows and the clock (see current_period_avg_watts), so there
             # is nothing to snapshot here - the figure is already stable now
             # that the window has closed. This callback survives only to
-            # clear the bonus numerator below and to push a state update.
+            # push a state update.
 
             # period_energy_kwh_today is NOT touched here - it resets at
             # midnight (see _handle_midnight), not at the period's own end
             # time, so it reads as a genuine "used today" total that holds
             # its value for the rest of the day once the window closes.
 
-            # Reset the avg-watts numerator itself now that it's been
-            # consumed above. A period that spans midnight (e.g. Controlled
-            # Load) is exempt from the midnight-rollover clear (so its energy
-            # survives being split by the day boundary while its window is
-            # still open) - but with no bonus finalizer either to pop it,
-            # nothing was ever clearing it, so it accumulated night after
-            # night indefinitely and inflated this same average further each
-            # day. Resetting it here, at the point the value has just been
-            # used, closes that gap for every period regardless of whether
-            # it has a bonus. Harmless if a bonus finalizer already cleared
-            # it - both just want it empty by day's end.
-            self.energy_by_period_today.pop(period_name, None)
+            # Nor is energy_by_period_today, the bonus numerator: the bonus
+            # finalizer owns it. Clearing it here raced that finalizer
+            # whenever the bonus window ends with the period - both fire in
+            # the same second in no guaranteed order, and losing the race
+            # settled the bonus against zero usage, crediting it whatever
+            # was used.
 
             self.hass.async_create_task(self._async_save())
             self._notify()
