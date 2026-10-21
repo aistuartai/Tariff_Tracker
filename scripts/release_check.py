@@ -247,7 +247,17 @@ def check_live(live: Path) -> None:
         record("FAIL", "live install", f"{live} not reachable")
         return
     files = [p.relative_to(COMPONENT) for p in COMPONENT.rglob("*") if p.is_file() and "__pycache__" not in p.parts]
-    differ = [str(f) for f in files if not (live / f).is_file() or not filecmp.cmp(COMPONENT / f, live / f, shallow=False)]
+    def same(f: Path) -> bool:
+        # Line endings only: a checkout on Windows rewrites them.
+        if not (live / f).is_file():
+            return False
+        if filecmp.cmp(COMPONENT / f, live / f, shallow=False):
+            return True
+        ours = (COMPONENT / f).read_bytes().replace(b"\r\n", b"\n")
+        theirs = (live / f).read_bytes().replace(b"\r\n", b"\n")
+        return ours == theirs
+
+    differ = [str(f) for f in files if not same(f)]
     if differ:
         record("WARN", "live install", f"{len(differ)} file(s) differ from repo: " + ", ".join(differ[:6]))
     else:
