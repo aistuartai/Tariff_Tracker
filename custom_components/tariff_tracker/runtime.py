@@ -48,6 +48,12 @@ _LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 
+# Live-power bonus samples arrive with every power reading - every few seconds
+# on some meters - so they're written on a delay rather than per reading. Home
+# Assistant flushes a pending delayed write when it stops, so a clean restart
+# loses nothing; a crash loses at most this many seconds of samples.
+BONUS_SAMPLE_SAVE_DELAY = 60
+
 
 @dataclass
 class BonusWindowSample:
@@ -76,6 +82,25 @@ class BonusWindowSample:
         self.elapsed_seconds = 0.0
         self.last_time = None
         self.last_watts = 0.0
+
+    def to_dict(self) -> dict[str, float]:
+        return {
+            "watt_seconds": self.watt_seconds,
+            "elapsed_seconds": self.elapsed_seconds,
+            "last_watts": self.last_watts,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, float]) -> BonusWindowSample:
+        # last_time is deliberately not restored: the first reading after a
+        # restart starts a fresh interval, so the time Home Assistant was down
+        # is left out of the average rather than credited at whatever the
+        # power happened to be when it stopped.
+        return cls(
+            watt_seconds=data.get("watt_seconds", 0.0),
+            elapsed_seconds=data.get("elapsed_seconds", 0.0),
+            last_watts=data.get("last_watts", 0.0),
+        )
 
 
 @dataclass
@@ -115,6 +140,9 @@ class PlanRuntime:
     # the energy_delta bonus is settled on. Cleared by the bonus finalizer.
     energy_by_period_today: dict[str, float] = field(default_factory=dict)
     bonus_earned_today: dict[str, bool | None] = field(default_factory=dict)
+    # Live-power bonus averaging, per period, for today's window so far.
+    # Persisted so a restart inside the window doesn't discard everything
+    # sampled before it and settle the bonus on the remainder alone.
     bonus_samples: dict[str, BonusWindowSample] = field(default_factory=dict)
     # ISO date string per period name, recording the last day that period's
     # bonus was finalized. Two jobs: stop the finalizer crediting the same
@@ -542,6 +570,10 @@ class PlanRuntime:
             "export_tier_usage_billing_period",
             dict(self.export_period_energy_kwh_billing_period),
         )
+        self.bonus_samples = {
+            name: BonusWindowSample.from_dict(data)
+            for name, data in saved.get("bonus_samples", {}).items()
+        }
         if saved.get("today"):
             self.today = date.fromisoformat(saved["today"])
         if saved.get("billing_period_start"):
@@ -560,50 +592,63 @@ class PlanRuntime:
                 name: today_iso for name in self.bonus_earned_today
             }
 
+    async def async_flush(self) -> None:
+        """Write everything now, superseding any pending delayed write.
+
+        Called on unload: a reload builds a new runtime on the same store,
+        and a delayed write still queued by this one would otherwise land
+        afterwards and overwrite the new runtime's state with stale data.
+        """
+        await self._async_save()
+
     async def _async_save(self) -> None:
         if not self._store:
             return
-        await self._store.async_save(
-            {
-                "last_energy_kwh": self.last_energy_kwh,
-                "last_energy_source": self.last_energy_source,
-                "energy_source_unit": self.energy_source_unit,
-                "tier_usage_today": self.tier_usage_today,
-                "tier_usage_billing_period": self.tier_usage_billing_period,
-                "energy_by_period_today": self.energy_by_period_today,
-                "bonus_earned_today": self.bonus_earned_today,
-                "bonus_finalized_for": self.bonus_finalized_for,
-                "cost_today": self.cost_today,
-                "cost_month": self.cost_month,
-                "cost_billing_period": self.cost_billing_period,
-                "bonus_savings_billing_period": self.bonus_savings_billing_period,
-                "bonus_days_earned_billing_period": self.bonus_days_earned_billing_period,
-                "last_export_kwh": self.last_export_kwh,
-                "last_export_source": self.last_export_source,
-                "export_source_unit": self.export_source_unit,
-                "export_tier_usage_today": self.export_tier_usage_today,
-                "export_tier_usage_billing_period": self.export_tier_usage_billing_period,
-                "export_credit_today": self.export_credit_today,
-                "export_credit_month": self.export_credit_month,
-                "export_credit_billing_period": self.export_credit_billing_period,
-                "period_energy_kwh_today": self.period_energy_kwh_today,
-                "period_energy_kwh_billing_period": self.period_energy_kwh_billing_period,
-                "export_period_energy_kwh_billing_period": self.export_period_energy_kwh_billing_period,
-                "period_energy_kwh_total": self.period_energy_kwh_total,
-                "export_period_energy_kwh_total": self.export_period_energy_kwh_total,
-                "today": self.today.isoformat(),
-                "billing_period_start": (
-                    self.billing_period_start.isoformat()
-                    if self.billing_period_start
-                    else None
-                ),
-                "billing_period_end": (
-                    self.billing_period_end.isoformat()
-                    if self.billing_period_end
-                    else None
-                ),
-            }
-        )
+        await self._store.async_save(self._snapshot())
+
+    def _snapshot(self) -> dict[str, Any]:
+        return {
+            "last_energy_kwh": self.last_energy_kwh,
+            "last_energy_source": self.last_energy_source,
+            "energy_source_unit": self.energy_source_unit,
+            "tier_usage_today": self.tier_usage_today,
+            "tier_usage_billing_period": self.tier_usage_billing_period,
+            "energy_by_period_today": self.energy_by_period_today,
+            "bonus_earned_today": self.bonus_earned_today,
+            "bonus_finalized_for": self.bonus_finalized_for,
+            "cost_today": self.cost_today,
+            "cost_month": self.cost_month,
+            "cost_billing_period": self.cost_billing_period,
+            "bonus_savings_billing_period": self.bonus_savings_billing_period,
+            "bonus_days_earned_billing_period": self.bonus_days_earned_billing_period,
+            "last_export_kwh": self.last_export_kwh,
+            "last_export_source": self.last_export_source,
+            "export_source_unit": self.export_source_unit,
+            "export_tier_usage_today": self.export_tier_usage_today,
+            "export_tier_usage_billing_period": self.export_tier_usage_billing_period,
+            "export_credit_today": self.export_credit_today,
+            "export_credit_month": self.export_credit_month,
+            "export_credit_billing_period": self.export_credit_billing_period,
+            "period_energy_kwh_today": self.period_energy_kwh_today,
+            "period_energy_kwh_billing_period": self.period_energy_kwh_billing_period,
+            "export_period_energy_kwh_billing_period": self.export_period_energy_kwh_billing_period,
+            "period_energy_kwh_total": self.period_energy_kwh_total,
+            "export_period_energy_kwh_total": self.export_period_energy_kwh_total,
+            "bonus_samples": {
+                name: sample.to_dict() for name, sample in self.bonus_samples.items()
+            },
+            "today": self.today.isoformat(),
+            "billing_period_start": (
+                self.billing_period_start.isoformat()
+                if self.billing_period_start
+                else None
+            ),
+            "billing_period_end": (
+                self.billing_period_end.isoformat()
+                if self.billing_period_end
+                else None
+            ),
+        }
 
     # ---- manual reset ------------------------------------------------
 
@@ -742,6 +787,9 @@ class PlanRuntime:
             )
         }
         self.bonus_earned_today = {}
+        # Samples saved on an earlier day belong to a window that has been
+        # and gone; carried into today's they would skew its average.
+        self.bonus_samples = {}
         self.export_tier_usage_today = {}
         self.export_credit_today = 0.0
         self.cost_today = self.daily_charge
@@ -932,6 +980,8 @@ class PlanRuntime:
         name = active[CONF_PERIOD_NAME]
         sample = self.bonus_samples.setdefault(name, BonusWindowSample())
         sample.sample(now, watts)
+        if self._store:
+            self._store.async_delay_save(self._snapshot, BONUS_SAMPLE_SAVE_DELAY)
         self._notify()
 
     # ---- bonus finalization -------------------------------------------

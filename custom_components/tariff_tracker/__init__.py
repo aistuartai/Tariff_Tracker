@@ -118,4 +118,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         runtime: PlanRuntime = hass.data[DOMAIN].pop(entry.entry_id)
         runtime.async_unload()
+        await runtime.async_flush()
     return unload_ok

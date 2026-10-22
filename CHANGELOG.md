@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.14.1] - 2026-10-22
+
+### Fixed
+- **Live-power bonus forgot its samples on restart.** The running average
+  for a `live_power_sensor` bonus was held in memory only, so a restart or
+  reload inside the bonus window discarded everything sampled before it,
+  and the bonus was settled on the remainder of the window alone - a
+  quiet two hours followed by a busy half hour after a restart read as
+  busy. Samples are now saved with the rest of the plan's state (on a
+  60-second delay, since power sensors report often; Home Assistant
+  flushes the pending write when it stops). The time Home Assistant was
+  down counts toward neither side of the average. Samples left from an
+  earlier day are discarded on setup.
+
 ## [0.14.0] - 2026-10-21
 
 ### Added
