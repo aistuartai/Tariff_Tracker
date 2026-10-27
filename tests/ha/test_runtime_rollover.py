@@ -227,6 +227,14 @@ async def test_bonus_withheld_over_threshold(hass: HomeAssistant, freezer):
     assert hass.states.get("binary_sensor.test_plan_peak_bonus_earned_today").state == "off"
 
 
+async def test_bonus_credited_at_exactly_the_threshold(hass: HomeAssistant, freezer):
+    # 0.3 kWh over 3 h is exactly 100 W - the limit itself keeps the bonus.
+    rt = await _bonus_evening(hass, freezer, 0.3)
+
+    assert rt.bonus_earned_today["Peak"] is True
+    assert rt.bonus_days_earned_billing_period == 1
+
+
 async def test_bonus_survives_period_close_firing_first(hass: HomeAssistant, freezer):
     # Bonus and period both end at 21:00, so two callbacks share a second in
     # no guaranteed order. The period's close used to clear the bonus

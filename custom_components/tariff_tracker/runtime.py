@@ -1031,7 +1031,7 @@ class PlanRuntime:
                 energy, engine.window_hours(start_t, end_t)
             )
 
-        earned = avg_w < threshold
+        earned = engine.bonus_earned(avg_w, threshold)
         self.bonus_earned_today[period_name] = earned
         self.bonus_finalized_for[period_name] = today_iso
         if earned:

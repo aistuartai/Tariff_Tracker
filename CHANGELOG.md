@@ -3,6 +3,26 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.14.2] - 2026-10-27
+
+### Fixed
+- **A day exactly on the bonus threshold was denied.** The comparison was
+  strict (`average < threshold`), so an average equal to the limit missed the
+  bonus. Cumulative energy sensors report in coarse steps (0.01 kWh is 3.3 W
+  over a 3-hour window), so a day that truly used 0.089 kWh against a
+  0.09 kWh (30 W) limit reads as exactly 0.09. Separately, summing the
+  meter's steps can leave floating-point noise (eighteen 0.01 kWh steps give
+  60.00000000000001 W against a 60 W limit). The threshold is now inclusive
+  (at or below earns the bonus), with a 1e-6 W float allowance. Applies to both calculation modes. The trade-off:
+  a true 0.091-0.094 kWh that rounds to 0.09 is now also credited. Settings
+  label now reads "must stay at or below".
+
+### Documentation
+- New README section, *How a bonus is judged*: the inclusive threshold, the
+  two calculation modes, why `live_power_sensor` overstates the average on a
+  power sensor that reports only on change (a held spike counts until the
+  next reading), and the effect of meter resolution near the limit.
+
 ## [0.14.1] - 2026-10-22
 
 ### Fixed

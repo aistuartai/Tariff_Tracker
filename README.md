@@ -50,6 +50,8 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
   a gas meter in MJ or GJ is used in its own unit (see below).
 - Optionally, a grid import **power** (W) sensor if you want live bonus
   window feedback instead of the after-the-fact energy-based calculation.
+  Only worth it if the sensor reports steadily; see
+  [How a bonus is judged](#how-a-bonus-is-judged).
 - Optionally, a grid export **energy** (kWh, `total_increasing`) sensor if
   you have solar and want feed-in credit tracked and netted against cost.
 
@@ -188,6 +190,42 @@ entry into `on` — `history_stats` counts that as another bonus day, so the
 total creeps above the number of days that have actually passed. The
 integration's own counter is incremented once per day as it settles and is
 unaffected by reloads and restarts.
+
+### How a bonus is judged
+
+At the end of the bonus window the average import power is compared with the
+threshold, and the bonus is earned if the average is **at or below** it. A
+day exactly on the limit keeps the bonus.
+
+There are two ways to get the average, chosen per bonus:
+
+- **From energy usage during the window** (`energy_delta`, recommended) —
+  the energy your meter recorded inside the window, divided by the window's
+  length. 0.09 kWh over 18:00–21:00 is 30 W. It needs no extra sensor and
+  matches how a retailer works the figure out from your meter data.
+- **From live power sensor readings** (`live_power_sensor`) — a running
+  average of the power sensor's readings. It gives real-time "how close am I"
+  feedback, but it is only as good as the sensor's reporting. Many meters
+  and inverters send a reading only when the value changes. The tracker has
+  to assume the last reading held until the next one, so a short spike that
+  was reported once is counted as if it lasted until the next update, and
+  the average comes out too high. On one Zigbee smart meter this denied the
+  bonus on days the retailer's meter data showed 17–27 W against a 30 W
+  limit. Use it only with a power sensor that reports steadily (every few
+  seconds), and prefer `energy_delta` otherwise.
+
+Cumulative energy sensors report in steps — a 0.01 kWh step is 3.3 W over a
+3-hour window — so a day that truly used 0.089 kWh against a 0.09 kWh limit
+reads as exactly 0.09. Because the limit is inclusive that day keeps its
+bonus. The flip side is that a true 0.091–0.094 kWh, which rounds to the same
+reading, is also credited. A sensor with finer resolution narrows that gap.
+Your retailer works from the raw meter data, so a day within one step of the
+limit can still differ from their figure either way.
+
+If a bonus was missed or wrongly credited, `sensor.<plan>_bonus_savings_this_billing_period`
+and `sensor.<plan>_bonus_days_earned` show what the tracker settled; compare
+the window's energy from your meter's own history with the retailer's figure
+before changing the threshold.
 
 ## Buttons created per plan
 

@@ -369,6 +369,27 @@ def avg_watts_from_energy(kwh_over_window: float, window_hours: float) -> float:
     return (kwh_over_window / window_hours) * 1000
 
 
+# Float slack only: eighteen 0.01 kWh meter steps add up to
+# 0.18000000000000002 kWh, which is 60.00000000000001 W over 3 h, and a
+# threshold of exactly 60 W must still count as met. Far below any real
+# meter's resolution, so it never changes the outcome of a genuine miss.
+BONUS_THRESHOLD_SLACK_W = 1e-6
+
+
+def bonus_earned(avg_w: float, threshold_w: float) -> bool:
+    """Whether an average import of `avg_w` keeps the bonus.
+
+    The threshold is inclusive: staying *at* it earns the bonus. Cumulative
+    energy sensors report in coarse steps (0.01 kWh is 3.3 W over a 3 h
+    window), so a day that truly used 0.089 kWh against a 0.09 kWh limit
+    reads as exactly 0.09. A strict comparison denies that day. Inclusive
+    credits it, at the price of also crediting a true 0.091-0.094 kWh that
+    rounds down to 0.09; with a $1 credit at stake, wrongly denying a
+    qualifying day is the worse error of the two.
+    """
+    return avg_w <= threshold_w + BONUS_THRESHOLD_SLACK_W
+
+
 def resolve_baseline_sources(
     stored_import: str | None,
     stored_export: str | None,

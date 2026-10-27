@@ -83,6 +83,33 @@ def test_avg_watts_from_energy():
     assert engine.avg_watts_from_energy(1, 0) == 0.0
 
 
+def test_bonus_threshold_is_inclusive():
+    assert engine.bonus_earned(29.9, 30) is True
+    assert engine.bonus_earned(30.0, 30) is True
+    assert engine.bonus_earned(30.1, 30) is False
+    assert engine.bonus_earned(0.0, 30) is True
+
+
+def test_bonus_threshold_met_exactly_despite_float_error():
+    # Energy accumulates from a meter's 0.01 kWh steps, and 18 of them add up
+    # to 0.18000000000000002, which is 60.00000000000001 W over 3 h. A 60 W
+    # limit still counts as met.
+    kwh = 0.0
+    for _ in range(18):
+        kwh += 0.01
+    avg_w = engine.avg_watts_from_energy(kwh, 3)
+    assert avg_w > 60  # the float error this guards against
+    assert engine.bonus_earned(avg_w, 60) is True
+
+
+def test_bonus_threshold_one_meter_step_over_is_a_miss():
+    # 4 Oct 2026: 0.10 kWh over 18:00-21:00 against a 0.09 kWh (30 W) limit.
+    assert engine.bonus_earned(engine.avg_watts_from_energy(0.10, 3), 30) is False
+    # 14 Oct 2026: a true 0.089 kWh reads 0.09 on a 0.01 kWh meter - exactly
+    # the limit, so it keeps the bonus.
+    assert engine.bonus_earned(engine.avg_watts_from_energy(0.09, 3), 30) is True
+
+
 # Export/feed-in periods use the exact same period/tier machinery as import
 # periods - the direction (charge vs credit) is applied by the caller
 # (runtime.py subtracts instead of adds), not by tariff_engine itself.
