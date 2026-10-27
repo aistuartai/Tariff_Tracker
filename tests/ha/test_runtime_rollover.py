@@ -76,6 +76,62 @@ async def test_billing_rollover_resets_period_totals_and_pool(hass: HomeAssistan
     assert rt.cost_billing_period == pytest.approx(1.0)
 
 
+async def test_rollover_keeps_the_finished_periods_closing_cost(hass: HomeAssistant, freezer, hass_storage):
+    freezer.move_to(local("2026-10-30 23:00:00"))
+    set_meter(hass, 1000)
+    rt = await setup_entry(hass, make_entry(daily_charge=1.0))
+    assert rt.last_billing_period_cost is None
+    set_meter(hass, 1005)
+    await hass.async_block_till_done()
+    closing = rt.cost_billing_period
+    assert closing > 0
+    start, end = rt.billing_period_start, rt.billing_period_end
+
+    await advance_to(hass, freezer, "2026-10-31 00:00:00")
+
+    assert rt.last_billing_period_cost == pytest.approx(closing)
+    assert rt.last_billing_period_start == start
+    assert rt.last_billing_period_end == end
+    state = hass.states.get("sensor.test_plan_cost_last_billing_period")
+    assert float(state.state) == pytest.approx(closing, abs=1e-4)
+    assert state.attributes["period_start"] == start.isoformat()
+    # billing_period_end is the first day of the next period; the bill's last
+    # day is the one before.
+    assert state.attributes["period_end"] == "2026-10-30"
+    # And it is saved, so a restart doesn't lose it.
+    assert stored(hass_storage)["last_billing_period_cost"] == pytest.approx(closing)
+
+
+async def test_last_billing_period_cost_is_unknown_before_any_rollover(hass: HomeAssistant):
+    set_meter(hass, 1000)
+    await setup_entry(hass, make_entry())
+    assert hass.states.get("sensor.test_plan_cost_last_billing_period").state == "unknown"
+
+
+async def test_manual_reset_does_not_touch_the_last_billing_period(hass: HomeAssistant, hass_storage):
+    preload(
+        hass_storage,
+        last_energy_kwh=1000.0,
+        last_energy_source="sensor.grid_import",
+        today="2026-10-15",
+        cost_billing_period=7.0,
+        last_billing_period_cost=20.8394,
+        last_billing_period_start="2026-09-27",
+        last_billing_period_end="2026-10-25",
+        billing_period_start="2026-10-25",
+        billing_period_end="2026-11-22",
+    )
+    set_meter(hass, 1000)
+    rt = await setup_entry(hass, make_entry())
+    assert rt.last_billing_period_cost == pytest.approx(20.8394)
+
+    await rt.async_reset_costs()
+
+    assert rt.cost_billing_period == 0.0
+    assert rt.last_billing_period_cost == pytest.approx(20.8394)
+    assert rt.last_billing_period_start.isoformat() == "2026-09-27"
+
+
 async def test_billing_cycle_edit_mid_period_keeps_the_money(hass: HomeAssistant):
     set_meter(hass, 1000)
     entry = make_entry()

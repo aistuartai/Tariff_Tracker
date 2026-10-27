@@ -3,7 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.14.2] - 2026-10-27
+## [0.15.0] - 2026-10-27
+
+### Added
+- **`sensor.<plan>_cost_last_billing_period`**: the closing cost of the
+  billing period before the current one, with `period_start` and
+  `period_end` as attributes. Captured at the moment a period rolls over and
+  saved with the plan's state, so it survives restarts. A manual cost reset
+  or a billing-cycle config edit does not change it, since neither is a
+  period ending. Unknown until the plan's first rollover after updating;
+  the value for a period that ended before the update can be seeded in the
+  store by hand.
 
 ### Fixed
 - **A day exactly on the bonus threshold was denied.** The comparison was

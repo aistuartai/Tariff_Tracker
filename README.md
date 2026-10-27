@@ -93,6 +93,7 @@ directory and restart Home Assistant.
 | `sensor.<plan>_bonus_savings_this_billing_period` | Total bonus $ earned so far this cycle |
 | `sensor.<plan>_bonus_days_earned` | Days this cycle whose bonus was earned; only present if a period has a bonus configured. `days_elapsed` as an attribute |
 | `sensor.<plan>_bonus_day_percentage` | Share of completed cycle days whose bonus was earned; only present if a period has a bonus configured. `days_earned`/`days_elapsed` as attributes |
+| `sensor.<plan>_cost_last_billing_period` | Closing cost of the billing period before this one, for comparing bills. `period_start`/`period_end` (the bill's first and last day) as attributes. Unknown until the plan has seen its first rollover; set after that automatically |
 | `sensor.<plan>_billing_period_start` | Start date of the current billing cycle |
 | `sensor.<plan>_billing_period_days_remaining` | Days left in the current cycle |
 | `binary_sensor.<period>_bonus_active_window` | On while that period's bonus window is active |

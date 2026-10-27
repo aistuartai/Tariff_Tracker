@@ -74,6 +74,7 @@ PLAN_LEVEL_KEYS: tuple[str, ...] = (
     "export_credit_billing_period",
     "export_credit_month",
     "export_credit_today",
+    "last_billing_period_cost",
     "reset_cost_history",
     "reset_monthly_cost",
 )

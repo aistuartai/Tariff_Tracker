@@ -1,6 +1,7 @@
 """Sensor platform for Tariff Tracker."""
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
@@ -42,6 +43,7 @@ async def async_setup_entry(
         CostTodaySensor(runtime, entry),
         CostMonthSensor(runtime, entry),
         CostBillingPeriodSensor(runtime, entry),
+        LastBillingPeriodCostSensor(runtime, entry),
         BillingPeriodStartSensor(runtime, entry),
         DaysRemainingSensor(runtime, entry),
         BonusSavingsSensor(runtime, entry),
@@ -189,6 +191,38 @@ class CostBillingPeriodSensor(_CostSensor):
     @property
     def native_value(self) -> float:
         return round(self._runtime.cost_billing_period, 4)
+
+
+class LastBillingPeriodCostSensor(_CostSensor):
+    """Closing cost of the billing period before the current one.
+
+    Unknown until the plan has seen a rollover. No state class: it is a fixed
+    figure for a finished bill, not a running total, so long-term statistics
+    would add nothing.
+    """
+
+    _attr_state_class = None
+
+    def __init__(self, runtime: PlanRuntime, entry: ConfigEntry) -> None:
+        super().__init__(
+            runtime, entry, "last_billing_period_cost", "Cost last billing period"
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        cost = self._runtime.last_billing_period_cost
+        return None if cost is None else round(cost, 4)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | None]:
+        start = self._runtime.last_billing_period_start
+        end = self._runtime.last_billing_period_end
+        return {
+            "period_start": start.isoformat() if start else None,
+            # billing_period_end is the first day of the *next* period, so
+            # the last day the bill covers is the day before it.
+            "period_end": (end - timedelta(days=1)).isoformat() if end else None,
+        }
 
 
 class BonusSavingsSensor(_CostSensor):

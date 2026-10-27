@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Retailer meter-data exports (personal usage data)
+*MeterDataReport*.csv

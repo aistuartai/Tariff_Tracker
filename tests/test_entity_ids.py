@@ -84,6 +84,7 @@ def test_plan_level_ids_are_never_period_entities():
         "cost_today",
         "cost_month",
         "cost_billing_period",
+        "last_billing_period_cost",
         "bonus_savings",
         "bonus_days_earned",
         "bonus_day_percentage",

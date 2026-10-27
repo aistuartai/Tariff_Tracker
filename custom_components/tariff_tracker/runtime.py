@@ -187,6 +187,13 @@ class PlanRuntime:
     # because re-adding the entity records a second entry into "on".
     bonus_days_earned_billing_period: int = 0
 
+    # The finished billing period before the current one: its closing cost
+    # and dates. Set at rollover, never by a manual reset, and None until the
+    # first rollover this plan has seen (or a seeded value in the store).
+    last_billing_period_cost: float | None = None
+    last_billing_period_start: date | None = None
+    last_billing_period_end: date | None = None
+
     export_credit_today: float = 0.0
     export_credit_month: float = 0.0
     export_credit_billing_period: float = 0.0
@@ -580,6 +587,15 @@ class PlanRuntime:
             self.billing_period_start = date.fromisoformat(saved["billing_period_start"])
         if saved.get("billing_period_end"):
             self.billing_period_end = date.fromisoformat(saved["billing_period_end"])
+        self.last_billing_period_cost = saved.get("last_billing_period_cost")
+        if saved.get("last_billing_period_start"):
+            self.last_billing_period_start = date.fromisoformat(
+                saved["last_billing_period_start"]
+            )
+        if saved.get("last_billing_period_end"):
+            self.last_billing_period_end = date.fromisoformat(
+                saved["last_billing_period_end"]
+            )
 
         # Upgrade path: installs from before bonus_finalized_for existed have
         # no record of which bonuses already settled today, and the setup
@@ -646,6 +662,17 @@ class PlanRuntime:
             "billing_period_end": (
                 self.billing_period_end.isoformat()
                 if self.billing_period_end
+                else None
+            ),
+            "last_billing_period_cost": self.last_billing_period_cost,
+            "last_billing_period_start": (
+                self.last_billing_period_start.isoformat()
+                if self.last_billing_period_start
+                else None
+            ),
+            "last_billing_period_end": (
+                self.last_billing_period_end.isoformat()
+                if self.last_billing_period_end
                 else None
             ),
         }
@@ -730,10 +757,17 @@ class PlanRuntime:
                 "rolled over, counters reset" if rolled_over else "re-anchored, counters kept",
             )
 
+        previous_start, previous_end = self.billing_period_start, self.billing_period_end
         self.billing_period_start = start
         self.billing_period_end = end
 
         if rolled_over:
+            # Keep the finished period's closing cost before the counters
+            # reset. Only here: a manual reset or a config re-anchor is not a
+            # period ending, so it must not overwrite this.
+            self.last_billing_period_cost = self.cost_billing_period
+            self.last_billing_period_start = previous_start
+            self.last_billing_period_end = previous_end
             self.cost_billing_period = 0.0
             self.bonus_savings_billing_period = 0.0
             self.bonus_days_earned_billing_period = 0
