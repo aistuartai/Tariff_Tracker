@@ -3,6 +3,22 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.15.1] - 2026-11-15
+
+### Fixed
+- **Rate sensors kept no long-term statistics.** `current_rate`,
+  `current_export_rate` and each `<period>_rate` used the `monetary` device
+  class, which Home Assistant only allows with `state_class: total`, so they
+  had no state class and their history was lost at the recorder's purge
+  (14 days by default). A price per unit isn't an amount of money: they now
+  have no device class and `state_class: measurement`, as core's Nord Pool,
+  Tibber and Amber price sensors do. Units, precision and entity IDs are
+  unchanged. Statistics start from the update; nothing earlier is
+  backfilled. `<period>_rate` reports the first tier's rate, so a change to
+  a later tier only shows in its `tiers` attribute, which has no statistics.
+  Changing the plan's unit (source sensor kWh to MJ, or the HA currency)
+  makes Home Assistant flag the statistics' unit change as a repair.
+
 ## [0.15.0] - 2026-10-27
 
 ### Added

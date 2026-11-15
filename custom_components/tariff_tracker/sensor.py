@@ -141,7 +141,10 @@ class CurrentPeriodSensor(_BaseTariffSensor):
 
 
 class CurrentRateSensor(_BaseTariffSensor):
-    _attr_device_class = SensorDeviceClass.MONETARY
+    # A price per unit, not an amount of money: MONETARY only permits
+    # state_class total, so it is left without a device class (as core's
+    # Nord Pool, Tibber and Amber price sensors are) to get statistics.
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 4
 
     def __init__(self, runtime: PlanRuntime, entry: ConfigEntry) -> None:
@@ -509,7 +512,8 @@ class PeriodRateSensor(_BaseTariffSensor):
     """Diagnostic: the configured per-unit rate for a tariff period (first
     tier rate; full tier list, including any usage limit, as an attribute)."""
 
-    _attr_device_class = SensorDeviceClass.MONETARY
+    # See CurrentRateSensor for why there is no device class.
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_suggested_display_precision = 4
 
@@ -581,7 +585,8 @@ class CurrentExportPeriodSensor(_BaseTariffSensor):
 
 
 class CurrentExportRateSensor(_BaseTariffSensor):
-    _attr_device_class = SensorDeviceClass.MONETARY
+    # See CurrentRateSensor for why there is no device class.
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 4
 
     def __init__(self, runtime: PlanRuntime, entry: ConfigEntry) -> None:

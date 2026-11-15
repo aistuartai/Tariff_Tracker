@@ -4,11 +4,12 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
-from plan_helpers import make_entry, set_meter, setup_entry, stored
+from plan_helpers import EXPORT_SOURCE, OFF_PEAK, make_entry, set_meter, setup_entry, stored
 
 ENERGY_TODAY = "sensor.test_plan_off_peak_energy_today"
 RATE = "sensor.test_plan_off_peak_rate"
 CURRENT_RATE = "sensor.test_plan_current_rate"
+CURRENT_EXPORT_RATE = "sensor.test_plan_current_export_rate"
 
 
 async def test_kwh_source_labels_kwh(hass: HomeAssistant, hass_storage):
@@ -94,3 +95,22 @@ async def test_unit_comes_from_registry_while_source_is_unknown(hass: HomeAssist
 
     rt = await setup_entry(hass, make_entry())
     assert rt.energy_unit == "MJ"
+
+
+async def test_rate_sensors_record_statistics(hass: HomeAssistant):
+    # A per-unit price is not an amount of money. MONETARY only allows
+    # state_class total, so the rate sensors carry no device class and use
+    # measurement, which is what makes the recorder keep long-term stats.
+    set_meter(hass, 1000)
+    set_meter(hass, 0, entity_id=EXPORT_SOURCE)
+    feed_in = {**OFF_PEAK, "name": "Feed-in", "tiers": [{"limit_kwh": None, "rate": 0.05}]}
+    await setup_entry(
+        hass, make_entry(export_sensor=EXPORT_SOURCE, export_periods=[feed_in])
+    )
+
+    currency = hass.config.currency
+    for entity_id in (RATE, CURRENT_RATE, CURRENT_EXPORT_RATE):
+        attrs = hass.states.get(entity_id).attributes
+        assert attrs["state_class"] == "measurement", entity_id
+        assert "device_class" not in attrs, entity_id
+        assert attrs["unit_of_measurement"] == f"{currency}/kWh", entity_id

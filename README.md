@@ -86,7 +86,7 @@ directory and restart Home Assistant.
 | Entity | Description |
 |---|---|
 | `sensor.<plan>_current_period` | Name of the active import period right now |
-| `sensor.<plan>_current_rate` | $/kWh (or $/MJ etc. — the plan's unit) charged right now |
+| `sensor.<plan>_current_rate` | $/kWh (or $/MJ etc. — the plan's unit) charged right now. This and the other rate sensors keep long-term statistics |
 | `sensor.<plan>_cost_today` | Running net cost for today (import cost + daily charge − export credit − bonus) |
 | `sensor.<plan>_cost_this_month` | Running net cost for the calendar month |
 | `sensor.<plan>_cost_this_billing_period` | Running net cost for the current billing cycle |
